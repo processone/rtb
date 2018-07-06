@@ -1,0 +1,29 @@
+###
+###              RTB configuration file
+###
+### The parameters used in this configuration file are explained at
+###
+###  https://github.com/processone/rtb/blob/master/README.md
+###
+### The configuration file is written in YAML
+###
+### *******************************************************
+### *******           !!! WARNING !!!               *******
+### *******     YAML IS INDENTATION SENSITIVE       *******
+### ******* MAKE SURE YOU INDENT SECTIONS CORRECTLY *******
+### *******************************************************
+###
+
+### Mandatory options: common for all scenarios
+scenario: xmpp
+domain: localhost
+interval: 100
+capacity: 10
+user: user%
+password: pass%
+certfile: cert.pem
+
+### Local Variables:
+### mode: yaml
+### End:
+### vim: set filetype=yaml tabstop=8
