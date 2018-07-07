@@ -70,7 +70,7 @@ options() ->
      {negotiation_timeout, 100},
      {connect_timeout, 100},
      {message_body_size, 100},
-     {reconnect_interval, 100},
+     {reconnect_interval, 60},
      {message_interval, 600},
      {presence_interval, 600},
      {disconnect_interval, 600},
