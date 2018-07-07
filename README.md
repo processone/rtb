@@ -4,7 +4,7 @@ RTB: Benchmarking tool to stress real-time protocols
 The idea of RTB is to provide a benchmarking tool to stress test
 XMPP and MQTT servers with the minimum configuration overhead.
 Also, at least in the XMPP world, a "golden standard" benchmark
-is highly demanded in order to compare server implementations
+is highly demanded in order to compare server implementations,
 avoiding disambiguations as much as possible. RTB is believed
 to be used in such role because it has sane defaults (gathered
 from statistics of real world servers) and it is able to
