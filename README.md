@@ -268,3 +268,14 @@ All parameters are optional.
 
   Whether to request bookmarks from private storage at login time or not (XEP-0049).
   The default is `true`.
+
+### Miscellaneous options
+
+- **sasl_mechanisms**: `[string()]`
+
+  A list of SASL mechanisms to use for authentication. Supported mechanisms are
+  `PLAIN` and `EXTERNAL`. The appropriate mechanism will be picked automatically.
+  If several mechanisms found matching then all of them will be tried in the order
+  defined by the value until the authentication is succeed. The default is `[PLAIN]`.
+  Note that for `EXTERNAL` authentication you need to have a valid certificate file
+  defined in the `certfile` option.
