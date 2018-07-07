@@ -23,6 +23,12 @@ user: user%
 password: pass%
 certfile: cert.pem
 
+### Server addresses
+### Optional, but highly recommended to set
+### servers:
+###   - tcp://127.0.0.1:5222
+###   - tcp://192.168.1.1:5222
+
 ### Local Variables:
 ### mode: yaml
 ### End:
