@@ -308,8 +308,8 @@ handle_stream_end(Reason, State) ->
 			    end,
 	    rtb_stats:incr('c2s-session-errors'),
 	    rtb_stats:incr({'c2s-error-reason', format_error(Err)}),
-	    lager:debug("~s terminated: ~s; reconnecting within ~B seconds",
-			[format_me(State1), format_error(Err), Timeout]),
+	    lager:debug("~s terminated: ~s; reconnecting...",
+			[format_me(State1), format_error(Err)]),
 	    State2 = reset_state(State1),
 	    reconnect_after(State2, Timeout)
     end.
@@ -804,20 +804,24 @@ unregister(I, Action) ->
 
 reconnect_after(#{action := Action, conn_id := I} = State, Timeout) ->
     unregister(I, Action),
-    MSecs = random_interval(Timeout),
+    {Timeout1, Factor} = maps:get(reconnect_after, State,
+				  {random_interval(Timeout), 1}),
+    Factor1 = Factor*2,
     State1 = State#{action => reconnect,
 		    csi_state => active,
+		    reconnect_after => {Timeout1*Factor1, Factor1},
 		    conn_addrs => rtb:random_server()},
-    xmpp_stream_out:set_timeout(State1, MSecs).
+    xmpp_stream_out:set_timeout(State1, Timeout1).
 
 session_established(#{user := U, server := S,
 		      resource := R, conn_id := I} = State) ->
     rtb_sm:register(I, self(), {U, S, R}),
     rtb_stats:incr('c2s-sessions'),
     State1 = State#{action => send, just_started => false},
-    State2 = xmpp_stream_out:set_timeout(State1, infinity),
-    State3 = schedule_all_actions(State2),
-    become(inactive, State3).
+    State2 = maps:remove(reconnect_after, State1),
+    State3 = xmpp_stream_out:set_timeout(State2, infinity),
+    State4 = schedule_all_actions(State3),
+    become(inactive, State4).
 
 current_time() ->
     p1_time_compat:monotonic_time(milli_seconds).
