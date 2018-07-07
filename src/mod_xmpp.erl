@@ -929,11 +929,17 @@ become(T1, #{csi_state := T2} = State) when T1 /= T2 ->
 become(_, State) ->
     State.
 
-fail(State, Reason) ->
+fail(#{action := Action} = State, Reason) ->
     Txt = iolist_to_binary(Reason),
-    State1 = State#{stop_reason => Txt},
-    lager:warning(Txt),
-    send_pkt(State1, xmpp:serr_policy_violation()).
+    case Action of
+	send ->
+	    rtb_stats:incr('c2s-errors'),
+	    rtb_stats:incr({'c2s-error-reason', Txt}),
+	    State;
+	_ ->
+	    State1 = State#{stop_reason => Txt},
+	    send_pkt(State1, xmpp:serr_policy_violation())
+    end.
 
 fail_missing_features(State, From, FeaturesWithOpts) ->
     FeatureList = rtb:format_list([F || {F, _} <- FeaturesWithOpts]),
