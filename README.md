@@ -67,7 +67,9 @@ benchmark in background append `-detached` switch:
 ```
 $ ./rtb.sh -detached
 ```
-You will find logs in the `log` directory.
+You will find logs in the `log` directory. To monitor the progress
+open the statistics web page: it's located at `http://this.machine.tld:8080`
+by default. Edit `www_port` option to change the port if needed.
 
 # Configuration
 
