@@ -29,6 +29,9 @@ certfile: cert.pem
 ###   - tcp://127.0.0.1:5222
 ###   - tcp://192.168.1.1:5222
 
+### An HTTP port for the statistics web interface
+### www_port: 8080
+
 ### Local Variables:
 ### mode: yaml
 ### End:
