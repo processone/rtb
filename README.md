@@ -32,7 +32,7 @@ To compile RTB you need:
  - GCC.
  - Libexpat 1.95 or higher.
  - Libyaml 0.1.4 or higher.
- - Erlang/OTP 17.5 or higher. Erlang/OTP 20 is recommended.
+ - Erlang/OTP 18.0 or higher. Erlang/OTP 20 is recommended.
  - OpenSSL 1.0.0 or higher.
  - Zlib 1.2.3 or higher.
  - gnuplot 4.4 or higher.
@@ -59,10 +59,10 @@ $ editor rtb.yml
 $ ./rtb.sh
 ```
 Investigate the output of the script for presence of errors. All errors
-are believed to be self-explanatory and most of them have some hints on
-what should be done in order to fix them.
+are supposed to be self-explanatory and most of them have some hints on
+what should be done to fix them.
 
-In order to stop the benchmark press `Ctrl+C+C`. In order to start the
+To stop the benchmark press `Ctrl+C+C`. In order to start the
 benchmark in background append `-detached` switch:
 ```
 $ ./rtb.sh -detached
@@ -86,35 +86,42 @@ changing them is discouraged.
 - **scenario**: `string()`
 
   The benchmarking scenario to use. Only `xmpp` is supported.
+
 - **domain**: `string()`
 
   The option is used for setting a namepart of an XMPP address and, if
   option `servers` is not defined, to resolve the IP address
-  and port number of the server to connect.
+  and the port number (via DNS SRV lookup) of the server to connect.
+
 - **interval**: `non_neg_integer()`
 
   The option is used to set a timeout to wait before spawning
-  next connection. The timeout is set in **milliseconds**.
+  the next connection. The timeout is in **milliseconds**.
+
 - **capacity**: `pos_integer()`
 
   The total amount of connections to be spawned.
+
 - **user**: `string()`
 
   The pattern for a user part of an XMPP Address. Symbol `%` will
   be replaced with the number of the current connection. For example,
   if the pattern is `user%` and `capacity` is 5, then the following
-  users will be generated: `user1@domain, user2@domain, ... user5@domain`.
+  users will be generated: `user1@domain, user2@domain, ..., user5@domain`.
+
 - **password**: `string()`
 
   The pattern for a password. The format is the same as for `user` option.
+
 - **certfile**: `string()`
 
-  A path to certificate file in PEM format. The file MUST contain both
-  a full certficate chain and a private key. If `EXTERNAL` authentication
+  A path to a certificate file. The file MUST contain both a full certficate
+  chain and a private key in PEM format. If `EXTERNAL` authentication
   is not used (see `sasl_mechanisms` option) then self-signed certificate
-  can be used: the one shipped with the sources is fine.
+  can be used: the [one](https://raw.githubusercontent.com/processone/rtb/master/cert.pem)
+  shipped with the source code is fine.
 
-## Optional parameters
+## Optional general parameters
 
 - **servers**: `[uri()]`
 
@@ -123,12 +130,14 @@ changing them is discouraged.
   can be any DNS name or IP address and `port` is a port number.
   Note that all parts of the URI are mandatory. IPv6 addresses MUST be
   enclosed in square brackets, e.g. `tcp://[1:2::3:4]:5222`.
-  This option is used to set transport, address and port of the server(s)
+  This option is used to set a transport, address and port of the server(s)
   being tested. It's highly recommended to use IP addresses in `hostname`
   part: excessive DNS lookups may create significant overhead for the
   benchmarking tool itself. The default is empty list which means the
-  value of `domain` option will be used to obtain the server(s) endpoint.
-  Keeping the default is also not recommended for the reason described above.
+  value of `domain` option will be used to obtain the server(s) endpoint(s).
+  Leaving the default alone is also not recommended for the reason described above.
+  See also `domain` option.
+
 - **bind**: `[ip_address()]`
 
   The list of IP addresses of local interfaces to bind. The typical
@@ -136,43 +145,51 @@ changing them is discouraged.
   to establish more than 64k outgoing connections from the same machine.
   The default is empty list: in this case a binding address will be chosen
   automatically by the OS.
+
 - **resource**: `string()`
 
   The option is used to set a resource part of an XMPP address.
   Similarly to the `user` option it may contain `%` symbol for the same purpose.
   The default value is `rtb`.
+
 - **stats_file**: `string()`
 
   A path to the file where statistics will be dumped. The file is used
   by `gnuplot` to generate statistics graphs. The default value is
   `log/stats.log`
+
 - **www_dir**: `string()`
 
   A path to a directory where HTML and image files will be created.
-  The default is `www`.
+  The default is `www`. This is used by the statistics web interface.
+
 - **www_port**: `pos_integer()`
 
-  A port to listen for incoming HTTP requests. The default is `8080`.
+  A port number to start the statistics web interface at. The default is 8080.
+
 - **gnuplot**: `string()`
 
-  The path to a gnuplot executing binary. The default is `gnuplot`.
+  The path to a gnuplot execution binary. The default is `gnuplot`.
 
 ## Parameters of the XMPP scenario
 
-All parameters are optional.
+All parameters are optional. The parameters described here are applied
+per single session.
 
-### Parameters for timing controls.
+### Parameters for timings control.
 
 - **negotiation_timeout**: `pos_integer() | false`
 
-  A timeout to wait for stream negotiation to complete.
+  A timeout to wait for a stream negotiation to complete.
   The value is in **seconds**. It can be set to `false` to disable timeout.
-  The default is `100` (seconds).
+  The default is 100 seconds.
+
 - **connect_timeout**: `pos_integer() | false`
 
   A timeout to wait for a TCP connection to be established.
   The value is in **seconds**. It can be set to `false` to disable timeout.
-  The default is `100` (seconds).
+  The default is 100 seconds.
+
 - **reconnect_interval**: `pos_integer() | false`
 
   A timeout to wait before another reconnection attempt after previous
@@ -181,37 +198,43 @@ All parameters are optional.
   consecutive connection failures. The value is in **seconds**.
   It can be set to `false` to disable reconnection attemps completely:
   thus the failed session will never be restored.
-  The default is `60` (seconds) - the value recommended by RFC6120.
+  The default is 60 (1 minute) - the value recommended by
+  [RFC6120](https://tools.ietf.org/html/rfc6120#section-3.3).
+
 - **message_interval**: `pos_integer() | false`
 
   An interval between sending messages. The value is in **seconds**.
   It can be set to `false` to disable sending messages completely.
-  The default is `600` (seconds). See also `message_body_size` option.
+  The default is 600 (10 minutes). See also `message_body_size` option.
+
 - **presence_interval**: `pos_integer() | false`
 
   An interval between sending presence broadcats. The value is in **seconds**.
   It can be set to `false` to disable sending presences completely.
-  The default is `600` (seconds). Note that at the first successful login a
+  The default is 600 (10 minutes). Note that at the first successful login a
   presence broadcast is always sent unless the value is not set to `false`.
+
 - **disconnect_interval**: `pos_integer() | false`
 
   An interval to wait before forcing disconnect. If stream management
   is enabled (this is the default, see `sm` option), then the session
-  will be resumed after a random timeout between `1` and the value of
+  will be resumed after a random timeout between 1 and the value of
   `max` attribute of `<enabled/>` element reported by the server.
   Otherwise, the next reconnection attempt will be performed according
   to the value and logic of `reconnect_interval`.
+
 - **proxy65_interval**: `pos_integer() | false`
 
   An interval between file transfers via Prox65 service (XEP-0065).
   The value is in **seconds**. It can be set to `false` to disable
-  this type of file transfer completely. The default is `600` (seconds).
+  this type of file transfer completely. The default is 600 (10 minutes).
   See also `proxy65_size` option.
+
 - **http_upload_interval**: `pos_integer() | false`
 
   An interval between file uploads via HTTP Upload service (XEP-0363).
   The value is in **seconds**. It can be set to `false` to disable
-  this file uploads completely. The default is `600` (seconds).
+  this file uploads completely. The default is 600 (10 minutes).
   See also `http_upload_size` option.
 
 ### Parameters for size control
@@ -220,12 +243,14 @@ All parameters are optional.
 
   The size of `<body/>` element of a message in **bytes**.
   Only makes sense when `message_interval` is not set to `false`.
-  The default is `100` (bytes).
+  The default is 100 bytes.
+
 - **proxy65_size**: `non_neg_integer()`
 
   The size of a file to transfer via Proxy65 service in **bytes**.
   Only makes sense when `proxy65_interval` is not set to `false`.
-  The default is `10485760` (bytes), i.e. 10 megabytes.
+  The default is 10485760 (10 megabytes).
+
 - **http_upload_size**: `non_neg_integer()`
 
   The size of a file to upload via HTTP Upload service in **bytes**.
@@ -238,38 +263,46 @@ All parameters are optional.
 - **starttls**: `true | false`
 
   Whether to use STARTTLS or not. The default is `true`.
+
 - **csi**: `true | false`
 
   Whether to send client state indications or not (XEP-0352).
   The default is `true`.
+
 - **sm**: `true | false`
 
   Whether to enable stream management with resumption or not (XEP-0198).
   The default is `true`.
+
 - **mam**: `true | false`
 
   Whether to enable MAM and request MAM archives at login time or not (XEP-0313).
-  The default is `true`. The requested size of the archive is `20` (messages).
+  The default is `true`. The requested size of the archive is 20 (messages).
+
 - **carbons**: `true | false`
 
-  Whether to enable message carbons or not (XEP-0280).
-  The default is `true`.
+  Whether to enable message carbons or not (XEP-0280). The default is `true`.
+
 - **blocklist**: `true | false`
 
   Whether to request block list at login time or not (XEP-0191).
   The default is `true`.
+
 - **roster**: `true | false`
 
   Whether to request roster at login time or not. The default is `true`.
+
 - **rosterver**: `true | false`
 
-  Whether to set roster version attribute or not. The default is `true`.
+  Whether to set a roster version attribute in roster request or not.
+  The default is `true`.
+
 - **private**: `true | false`
 
   Whether to request bookmarks from private storage at login time or not (XEP-0049).
   The default is `true`.
 
-### Miscellaneous options
+### Miscellaneous parameters
 
 - **sasl_mechanisms**: `[string()]`
 
