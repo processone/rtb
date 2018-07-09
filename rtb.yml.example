@@ -16,12 +16,13 @@
 
 ### Mandatory options: common for all scenarios
 scenario: xmpp
-domain: localhost
 interval: 100
 capacity: 10
-user: user%
-password: pass%
 certfile: cert.pem
+
+### Mandatory options for XMPP scenario
+jid: user%@localhost
+password: pass%
 
 ### Server addresses
 ### Optional, but highly recommended to set

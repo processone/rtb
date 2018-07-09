@@ -89,13 +89,7 @@ These group of parameters are common for all scenarios.
 
 - **scenario**: `string()`
 
-  The benchmarking scenario to use. Only `xmpp` is supported.
-
-- **domain**: `string()`
-
-  The option is used for setting a namepart of an XMPP address and, if
-  option `servers` is not defined, to resolve the IP address
-  and the port number (via DNS SRV lookup) of the server to connect.
+  The benchmarking scenario to use. The only possible value so far is `xmpp`.
 
 - **interval**: `non_neg_integer()`
 
@@ -105,17 +99,6 @@ These group of parameters are common for all scenarios.
 - **capacity**: `pos_integer()`
 
   The total amount of connections to be spawned.
-
-- **user**: `string()`
-
-  The pattern for a user part of an XMPP Address. Symbol `%` will
-  be replaced with the number of the current connection. For example,
-  if the pattern is `user%` and `capacity` is 5, then the following
-  users will be generated: `user1@domain, user2@domain, ..., user5@domain`.
-
-- **password**: `string()`
-
-  The pattern for a password. The format is the same as for `user` option.
 
 - **certfile**: `string()`
 
@@ -150,12 +133,6 @@ These group of parameters are common for all scenarios.
   The default is empty list: in this case a binding address will be chosen
   automatically by the OS.
 
-- **resource**: `string()`
-
-  The option is used to set a resource part of an XMPP address.
-  Similarly to the `user` option it may contain `%` symbol for the same purpose.
-  The default value is `rtb`.
-
 - **stats_file**: `string()`
 
   A path to the file where statistics will be dumped. The file is used
@@ -178,10 +155,27 @@ These group of parameters are common for all scenarios.
 ## Parameters of the XMPP scenario
 
 These group of parameters are specific to the XMPP scenario only.
-All parameters are optional. The parameters described here are applied
-per single session.
+The parameters described here are applied per single session.
 
-### Parameters for timings control.
+### Mandatory parameters
+
+- **jid**: `string()`
+
+  A pattern for an XMPP address: bare or full. If it's bare, the default
+  `rtb` resource will be used. The pattern may contain `%` symbol which
+  will be replaced by the current connection number. For example, if
+  the pattern is `user%@domain.tld/res%` and `capacity` is 5 then
+  the following array of XMPP addresses will be generated:
+  `user1@domain.tld/res1`, `user2@domain.tld/res2`, `...`, `user5@domain.tld/res5`.
+
+- **password**: `string()`
+
+  The pattern for a password. The pattern may contain `%` symbol with the
+  same meaning as in `jid` option.
+
+### Optional parameters
+
+#### Parameters for timings control.
 
 - **negotiation_timeout**: `pos_integer() | false`
 
@@ -242,7 +236,7 @@ per single session.
   this file uploads completely. The default is 600 (10 minutes).
   See also `http_upload_size` option.
 
-### Parameters for size control
+#### Parameters for size control
 
 - **message_body_size**: `non_neg_integer()`
 
@@ -263,7 +257,7 @@ per single session.
   There is no default value: the option is only needed to set
   if the service doesn't report its maximum file size.
 
-### Parameters for enabling/disabling features
+#### Parameters for enabling/disabling features
 
 - **starttls**: `true | false`
 
@@ -307,7 +301,7 @@ per single session.
   Whether to request bookmarks from private storage at login time or not (XEP-0049).
   The default is `true`.
 
-### Miscellaneous parameters
+#### Miscellaneous parameters
 
 - **sasl_mechanisms**: `[string()]`
 

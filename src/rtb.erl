@@ -26,7 +26,7 @@
 -export([random_server/0, format_list/1]).
 
 -callback load() -> ok | {error, any()}.
--callback start(pos_integer(), jid:jid(), binary(),
+-callback start(pos_integer(),
 		[gen_tcp:option()],
 		[{inet:hostname(), inet:port_number(), tcp | tls}],
 		boolean()) ->

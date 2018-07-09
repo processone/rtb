@@ -336,8 +336,6 @@ prep_option(scenario, Scenario) ->
 		       [Scenario, filename:join(code:lib_dir(rtb),
 						Module) ++ ".beam"])
     end;
-prep_option(domain, S) ->
-    {domain, jid:nameprep(S)};
 prep_option(interval, 0) ->
     lager:warning("The benchmark is in the avalanche mode"),
     {interval, 0};
@@ -349,16 +347,6 @@ prep_option(capacity, C) when is_integer(C), C>0 ->
     {capacity, C};
 prep_option(servers, List) ->
     {servers, prep_servers(List)};
-prep_option(Opt, random) when Opt == user;
-			     Opt == password;
-			     Opt == resource ->
-    {Opt, random};
-prep_option(user, U) ->
-    {user, U};
-prep_option(password, P) ->
-    {password, P};
-prep_option(resource, R) ->
-    {resource, R};
 prep_option(bind, List) ->
     AvailAddrs = getifaddrs(),
     {bind, prep_addresses(List, AvailAddrs)};
@@ -408,16 +396,12 @@ options() ->
     [{bind, []},
      {servers, []},
      {stats_file, filename:join(<<"log">>, <<"stats.log">>)},
-     {resource, <<"rtb">>},
      {oom_killer, <<"true">>},
      {www_dir, <<"www">>},
      {www_port, 8080},
      {gnuplot, <<"gnuplot">>},
      %% Required options
      scenario,
-     domain,
      interval,
      capacity,
-     certfile,
-     user,
-     password].
+     certfile].

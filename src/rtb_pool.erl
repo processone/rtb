@@ -22,7 +22,6 @@
 
 %% API
 -export([start_link/2, register/2, unregister/1, lookup/1, random/0]).
--export([replace/3]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -31,13 +30,8 @@
 -type addr_list() :: [inet:ip_address()].
 
 -record(state, {module       :: module(),
-		domain       :: binary(),
 		capacity     :: pos_integer(),
 		interval     :: pos_integer(),
-		user         :: random | binary(),
-		password     :: random | binary(),
-		resource     :: random | binary(),
-		re           :: re:mp(),
 		name         :: pos_integer(),
 		bind_addrs   :: {addr_list(), addr_list()},
 		server_addrs :: {addr_list(), addr_list()}}).
@@ -64,12 +58,8 @@ lookup(Pid) ->
     end.
 
 random() ->
-    UserPattern = rtb_config:get_option(user),
-    Domain = rtb_config:get_option(domain),
     Capacity = rtb_config:get_option(capacity),
-    I = integer_to_binary(p1_rand:uniform(Capacity)),
-    User = replace(UserPattern, "%", I),
-    {I, {User, Domain, <<"">>}}.
+    p1_rand:uniform(Capacity).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -81,13 +71,8 @@ init([I]) ->
     Mod = rtb_config:get_option(module),
     Interval = rtb_config:get_option(interval),
     Capacity = rtb_config:get_option(capacity),
-    Domain = rtb_config:get_option(domain),
-    UserPattern = rtb_config:get_option(user),
-    PassPattern = rtb_config:get_option(password),
-    ResourcePattern = rtb_config:get_option(resource),
     BindAddrs = rtb_config:get_option(bind),
     Servers = shuffle(rtb_config:get_option(servers)),
-    {ok, Re} = re:compile("%"),
     if Interval == 0 orelse I == 1 ->
 	    self() ! boot;
        true ->
@@ -95,15 +80,10 @@ init([I]) ->
     end,
     {ok, #state{module = Mod,
 		name = I,
-		domain = Domain,
 		capacity = Capacity,
-		re = Re,
 		interval = Interval,
 		bind_addrs = {BindAddrs, BindAddrs},
-		server_addrs = {Servers, Servers},
-		user = UserPattern,
-		password = PassPattern,
-		resource = ResourcePattern}}.
+		server_addrs = {Servers, Servers}}}.
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -117,25 +97,15 @@ handle_info(boot, State) ->
     handle_info(connect, State);
 handle_info(connect, #state{module = Mod,
 			    interval = Interval,
-			    user = UserPattern,
-			    password = PassPattern,
-			    resource = ResourcePattern,
-			    re = Re,
 			    bind_addrs = BindAddrs,
 			    server_addrs = ServerAddrs,
-			    domain = Domain,
 			    capacity = Capacity} = State) ->
     I = ets:update_counter(?MODULE, iteration, 1, {iteration, 0}),
     if I =< Capacity ->
 	    erlang:send_after(Interval, self(), connect),
-	    Iter = integer_to_binary(I),
-	    User = replace(UserPattern, Re, Iter),
-	    Resource = replace(ResourcePattern, Re, Iter),
-	    Password = replace(PassPattern, Re, Iter),
-	    JID = jid:make(User, Domain, Resource),
 	    {Opts, BindAddrs1} = connect_options(BindAddrs),
 	    {Addrs, ServerAddrs1} = server_addrs(ServerAddrs),
-	    case Mod:start(I, JID, Password, Opts, Addrs, I == 1) of
+	    case Mod:start(I, Opts, Addrs, I == 1) of
 		{ok, _Pid} ->
 		    {noreply, State#state{bind_addrs = BindAddrs1,
 					  server_addrs = ServerAddrs1}};
@@ -162,12 +132,6 @@ code_change(_OldVsn, State, _Extra) ->
 wait_for_startup() ->
     [_|_] = supervisor:which_children(rtb_sup),
     ok.
-
--spec replace(random | binary(), re:mp(), binary()) -> binary().
-replace(random, _, _) ->
-    p1_rand:get_string();
-replace(String, Re, Iter) ->
-    re:replace(String, Re, Iter, [{return, binary}]).
 
 connect_options({[], []}) ->
     {[], {[], []}};

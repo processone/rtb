@@ -76,7 +76,7 @@ do(#mod{method = Method, data = Data}) ->
 httpd_options() ->
     ServerRoot = rtb_config:get_option(www_dir),
     Port = rtb_config:get_option(www_port),
-    Domain = rtb_config:get_option(domain),
+    {_, Domain, _} = rtb_config:get_option(jid),
     DocRoot = filename:join(ServerRoot, "data"),
     [{port, Port},
      {server_root, ServerRoot},

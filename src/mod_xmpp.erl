@@ -21,7 +21,7 @@
 -behaviour(rtb).
 
 %% rtb API
--export([load/0, start/6, options/0, prep_option/2, stats/0]).
+-export([load/0, start/4, options/0, prep_option/2, stats/0]).
 %% xmpp_stream_out callbacks
 -export([tls_options/1, tls_required/1, tls_verify/1, tls_enabled/1]).
 -export([sasl_mechanisms/1, handle_stream_end/2, resolve/2,
@@ -59,11 +59,10 @@
 load() ->
     ok.
 
-start(I, JID, Password, Opts, Servers, JustStarted) ->
-    Domain = JID#jid.lserver,
+start(I, Opts, Servers, JustStarted) ->
+    {_, S, _} = rtb_config:get_option(jid),
     xmpp_stream_out:start(
-      ?MODULE, [Domain, Domain,
-		{I, JID, Password, Opts, Servers, JustStarted}], []).
+      ?MODULE, [S, S, {I, Opts, Servers, JustStarted}], []).
 
 options() ->
     [{sasl_mechanisms, [<<"PLAIN">>]},
@@ -86,7 +85,10 @@ options() ->
      {blocklist, <<"true">>},
      {roster, <<"true">>},
      {rosterver, <<"true">>},
-     {private, <<"true">>}].
+     {private, <<"true">>},
+     %% Required options
+     jid,
+     password].
 
 stats() ->
     [{'c2s-sessions', fun rtb_stats:lookup/1},
@@ -98,6 +100,13 @@ stats() ->
      {'iq-out', fun rtb_stats:lookup/1},
      {'iq-in', fun rtb_stats:lookup/1}].
 
+prep_option(jid, Val) ->
+    case jid:decode(Val) of
+	#jid{luser = U, lserver = S, lresource = R} when U /= <<>> ->
+	    {jid, {U, S, R}}
+    end;
+prep_option(password, P) when is_binary(P) ->
+    {password, P};
 prep_option(sasl_mechanisms, Ms) when is_list(Ms) ->
     {sasl_mechanisms,
      [list_to_binary(string:to_upper(binary_to_list(M))) || M <- Ms]};
@@ -166,15 +175,15 @@ connect_timeout(_) ->
 %%%===================================================================
 %%% xmpp_stream_out callbacks
 %%%===================================================================
-init([State, {I, JID, Password, Opts, Servers, JustStarted}]) ->
+init([State, {I, Opts, Servers, JustStarted}]) ->
+    {JID, Password} = make_jid(I, true),
     process_flag(trap_exit, true),
     CertFile = rtb_config:get_option(certfile),
     NegTimeout = rtb_config:get_option(negotiation_timeout),
-    {U, S, R} = jid:tolower(JID),
     rtb_pool:register(self(), I),
-    State1 = State#{user => U,
-		    server => S,
-		    resource => R,
+    State1 = State#{user => JID#jid.user,
+		    server => JID#jid.lserver,
+		    resource => JID#jid.lresource,
 		    password => Password,
 		    jid => JID,
 		    conn_id => I,
@@ -632,8 +641,8 @@ proxy65_activate_callback(State, IQ, _, _) ->
 %%% Scheduled actions
 %%%===================================================================
 send_message(State) ->
-    {_, USR} = rtb_pool:random(),
-    To = jid:make(USR),
+    I = rtb_pool:random(),
+    To = make_jid(I, false),
     Payload = rtb_config:get_option(message_body),
     Msg = #message{to = To, body = xmpp:mk_text(Payload),
 		   id = <<"message">>, type = chat},
@@ -957,8 +966,8 @@ fail_iq_error(State, #iq{type = error, from = From} = IQ, Format) ->
     FromS = case From#jid.luser of
 		<<>> -> jid:encode(BFrom);
 		_ ->
-		    UserPattern = rtb_config:get_option(user),
-		    User = rtb_pool:replace(UserPattern, "%", "*"),
+		    {U, _, _} = rtb_config:get_option(jid),
+		    User = replace(U, "%", "*"),
 		    jid:encode(BFrom#jid{user = User, luser = User})
 	    end,
     Txt = io_lib:format(Format ++ ": ~s", [FromS, format_error(IQ)]),
@@ -1028,3 +1037,25 @@ notify_file_receiver(State, GetURL, Size) ->
 	    ok
     end,
     State.
+
+-spec make_jid(integer(), boolean()) -> jid:jid() | {jid:jid(), binary()}.
+make_jid(I, WithPassword) ->
+    {U, S, R} = rtb_config:get_option(jid),
+    P = rtb_config:get_option(password),
+    {ok, Re} = re:compile("%"),
+    Num = integer_to_binary(I),
+    User = replace(U, Re, Num),
+    Resource = case R of
+		   <<>> -> <<"rtb">>;
+		   _ -> replace(R, Re, Num)
+	       end,
+    if WithPassword ->
+	    Password = replace(P, Re, Num),
+	    {jid:make(User, S, Resource), Password};
+       true ->
+	    jid:make(User, S, Resource)
+    end.
+
+-spec replace(binary(), re:mp() | string(), string() | binary()) -> binary().
+replace(String, Re, Iter) ->
+    re:replace(String, Re, Iter, [{return, binary}]).
