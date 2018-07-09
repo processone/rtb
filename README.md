@@ -76,14 +76,16 @@ by default. Edit `www_port` option to change the port if needed.
 All configuration is performed via editing parameters of `rtb.yml` file.
 The file has [YAML](http://en.wikipedia.org/wiki/YAML) syntax.
 There are mandatory and optional parameters.
-There is a group of general parameters which can be used with any
-scenario. Another group of parameters is scenario specific.
 The majority of parameters are optional, and, except `servers` and
 `bind` parameters you are unlikely to change them. Furthermore, for
 better performance comparison of different server implementations
 changing them is discouraged.
 
-## Mandatory general parameters
+## General parameters
+
+These group of parameters are common for all scenarios.
+
+### Mandatory parameters
 
 - **scenario**: `string()`
 
@@ -123,7 +125,7 @@ changing them is discouraged.
   can be used: the [one](https://raw.githubusercontent.com/processone/rtb/master/cert.pem)
   shipped with the source code is fine.
 
-## Optional general parameters
+### Optional parameters
 
 - **servers**: `[uri()]`
 
@@ -175,6 +177,7 @@ changing them is discouraged.
 
 ## Parameters of the XMPP scenario
 
+These group of parameters are specific to the XMPP scenario only.
 All parameters are optional. The parameters described here are applied
 per single session.
 
