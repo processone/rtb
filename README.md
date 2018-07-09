@@ -103,10 +103,7 @@ These group of parameters are common for all scenarios.
 - **certfile**: `string()`
 
   A path to a certificate file. The file MUST contain both a full certficate
-  chain and a private key in PEM format. If `EXTERNAL` authentication
-  is not used (see `sasl_mechanisms` option) then self-signed certificate
-  can be used: the [one](https://raw.githubusercontent.com/processone/rtb/master/cert.pem)
-  shipped with the source code is fine.
+  chain and a private key in PEM format.
 
 ### Optional parameters
 
@@ -121,9 +118,9 @@ These group of parameters are common for all scenarios.
   being tested. It's highly recommended to use IP addresses in `hostname`
   part: excessive DNS lookups may create significant overhead for the
   benchmarking tool itself. The default is empty list which means the
-  value of `domain` option will be used to obtain the server(s) endpoint(s).
-  Leaving the default alone is also not recommended for the reason described above.
-  See also `domain` option.
+  used scenario will detect the server(s) endpoint(s) by its own mechanisms,
+  such as DNS SRV lookups. Leaving the default alone is also not recommended
+  for the reason described above.
 
 - **bind**: `[ip_address()]`
 
