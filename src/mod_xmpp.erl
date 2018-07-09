@@ -325,7 +325,7 @@ handle_info({timeout, TRef, {Interval, Fun}}, State) ->
     case maps:take(Fun, State) of
 	{TRef, State1} ->
 	    State2 = ?MODULE:Fun(State1),
-	    schedule(State2, Interval, Fun);
+	    schedule(State2, Interval, Fun, false);
 	{_, State1} ->
 	    State1;
 	error ->
@@ -967,7 +967,7 @@ fail_iq_error(State, #iq{type = error, from = From} = IQ, Format) ->
 schedule_all_actions(State) ->
     lists:foldl(
       fun({IntervalName, FunName}, StateAcc) ->
-	      schedule(StateAcc, IntervalName, FunName)
+	      schedule(StateAcc, IntervalName, FunName, true)
       end, State,
       [{message_interval, send_message},
        {presence_interval, send_presence},
@@ -975,16 +975,19 @@ schedule_all_actions(State) ->
        {proxy65_interval, proxy65_send_file},
        {disconnect_interval, disconnect}]).
 
-schedule(#{action := send} = State, IntervalName, FunName) ->
+schedule(#{action := send} = State, IntervalName, FunName, Randomize) ->
     case rtb_config:get_option(IntervalName) of
 	false ->
 	    State;
 	Interval ->
-	    TRef = erlang:start_timer(random_interval(Interval), self(),
-				      {IntervalName, FunName}),
+	    MSecs = case Randomize of
+			true -> random_interval(Interval);
+			false -> timer:seconds(Interval)
+		    end,
+	    TRef = erlang:start_timer(MSecs, self(), {IntervalName, FunName}),
 	    State#{FunName => TRef}
     end;
-schedule(State, _, _) ->
+schedule(State, _, _, _) ->
     State.
 
 cancel_timers(State) ->
