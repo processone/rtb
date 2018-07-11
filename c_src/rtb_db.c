@@ -227,7 +227,6 @@ void print_hint(file_type t, char *argv[]) {
   } else {
     char server[BUFSIZE];
     replace(server, argv[5], '.', "%2e");
-    printf("server = %s\n", server);
     printf("Now copy %s and %s into Prosody spool directory. Something like:\n"
 	   " sudo rm -rf /var/lib/prosody/%s/accounts\n"
 	   " sudo rm -rf /var/lib/prosody/%s/roster\n"
