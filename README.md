@@ -71,6 +71,28 @@ You will find logs in the `log` directory. To monitor the progress
 open the statistics web page: it's located at `http://this.machine.tld:8080`
 by default. Edit `www_port` option to change the port if needed.
 
+# Database population
+
+During compilation a special script is created which aims to help
+you populating the server's database. It's located at `priv/bin/rtb_db`.
+The script is able to generate files for users and rosters in either
+CSV format (ejabberd) or in Lua format (Prosody).
+In order to generate files for ejabberd execute something like:
+```
+$ priv/bin/rtb_db ejabberd sql 1000 user% domain.tld pass%
+```
+The same, but for Prosody will look like:
+```
+$ priv/bin/rtb_db prosody flat 1000 user% domain.tld pass%
+```
+where 1000 is the total amount of users (must match `capacity` parameter
+of the configuration file).
+
+Follow the hint provided by the script to load generated files
+into the server's spool/database. Note that user, domain and
+password arguments must match those defined in the configuration file
+(see `jid` and `password` parameters).
+
 # Configuration
 
 All configuration is performed via editing parameters of `rtb.yml` file.
