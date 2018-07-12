@@ -72,6 +72,7 @@ void mk_roster_dat(char *data, char *argv[]) {
 }
 
 int generate_users_csv(long int capacity, char *argv[]) {
+  long int i;
   FILE *fd = fopen(USERS_CSV_FILE, "w");
   if (!fd) {
     printf("Failed to open file %s for writing: %s\n", USERS_CSV_FILE, strerror(errno));
@@ -82,7 +83,7 @@ int generate_users_csv(long int capacity, char *argv[]) {
   fflush(stdout);
   char row[BUFSIZE];
   mk_user_csv_row(row, argv);
-  for (long int i=1; i<=capacity; i++) {
+  for (i=1; i<=capacity; i++) {
     if (fprintf(fd, row, i, i) < 0) {
       printf("Failed to write to file %s: %s\n", USERS_CSV_FILE, strerror(errno));
       return errno;
