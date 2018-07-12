@@ -471,7 +471,13 @@ disco_info_callback(#{lang := Lang, server := Server} = State,
 	    send_pkt(State, xmpp:serr_invalid_xml(Txt, Lang))
     end;
 disco_info_callback(State, IQ, _) ->
-    fail_iq_error(State, IQ, "Failed to request disco#info from ~s").
+    case xmpp:get_error(IQ) of
+	#stanza_error{reason = R} when R == 'service-unavailable';
+				       R == 'feature-not-implemented' ->
+	    State;
+	_ ->
+	    fail_iq_error(State, IQ, "Failed to request disco#info from ~s")
+    end.
 
 disco_items_callback(#{lang := Lang} = State,
 		     #iq{type = result, from = From} = IQRes, Delay) ->
@@ -494,7 +500,13 @@ disco_items_callback(#{lang := Lang} = State,
 	    send_pkt(State, xmpp:serr_invalid_xml(Txt, Lang))
     end;
 disco_items_callback(State, IQ, _) ->
-    fail_iq_error(State, IQ, "Failed to request disco#items from ~s").
+    case xmpp:get_error(IQ) of
+	#stanza_error{reason = R} when R == 'service-unavailable';
+				       R == 'feature-not-implemented' ->
+	    State;
+	_ ->
+	    fail_iq_error(State, IQ, "Failed to request disco#items from ~s")
+    end.
 
 carbons_set_callback(State, #iq{type = result}, Delay) ->
     rtb_stats:incr({'carbons-enable-delay', Delay}),
