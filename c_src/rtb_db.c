@@ -100,8 +100,9 @@ int generate_users_csv(state_t *state) {
   printf("Generating %s... ", USERS_CSV_FILE);
   fflush(stdout);
   char row[BUFSIZE];
+  int i;
   mk_user_csv_row(row, state);
-  for (int i=1; i<=state->capacity; i++) {
+  for (i=1; i<=state->capacity; i++) {
     if (fprintf(fd, row, i, i) < 0) {
       printf("Failed to write to file %s: %s\n", USERS_CSV_FILE, strerror(errno));
       return errno;
