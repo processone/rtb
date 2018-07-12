@@ -76,12 +76,12 @@ by default. Edit `www_port` option to change the port if needed.
 During compilation a special script is created which aims to help
 you populating the server's database. It's located at `priv/bin/rtb_db`.
 The script is able to generate files for users and rosters in either
-CSV format (ejabberd) or in Lua format (Prosody).
+CSV format (ejabberd) or in Lua format (Metronome/Prosody).
 In order to generate files for ejabberd execute something like:
 ```
 $ priv/bin/rtb_db ejabberd sql 1000 user% domain.tld pass%
 ```
-The same, but for Prosody will look like:
+The same, but for Metronome/Prosody will look like:
 ```
 $ priv/bin/rtb_db prosody flat 1000 user% domain.tld pass%
 ```
