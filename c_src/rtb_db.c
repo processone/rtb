@@ -53,10 +53,11 @@ void replace(char *dst, const char *src, const char c, const char *str) {
 
 void mk_user_csv_row(char *row, state_t *state) {
   char *user = state->user;
+  char *domain = state->domain;
   char *password = state->password;
   char buf[BUFSIZE];
   memset(buf, 0, BUFSIZE);
-  sprintf(buf, "\"%s\",\"%s\",\"\",\"\",\"0\",\"%s\"\n", user, password, timestamp());
+  sprintf(buf, "\"%s\",\"%s\",\"%s\",\"\",\"\",\"0\",\"%s\"\n", user, domain, password, timestamp());
   replace(row, buf, '%', "%lu");
 }
 
@@ -65,8 +66,8 @@ void mk_roster_csv_row(char *row, state_t *state) {
   char *domain = state->domain;
   char buf[BUFSIZE];
   sprintf(buf,
-	  "\"%s\",\"%s@%s\",\"%s\",\"B\",\"N\",\"\",\"N\",\"\",\"item\",\"%s\"\n",
-	  user, user, domain, user, timestamp());
+	  "\"%s\",\"%s\",\"%s@%s\",\"%s\",\"B\",\"N\",\"\",\"N\",\"\",\"item\",\"%s\"\n",
+	  user, domain, user, domain, user, timestamp());
   replace(row, buf, '%', "%lu");
 }
 
@@ -241,6 +242,7 @@ void print_hint(state_t *state) {
       "   INTO TABLE %s FIELDS TERMINATED BY ','\n"
       "   ENCLOSED BY '\"' LINES TERMINATED BY '\\n';\n";
     char *pgsql_cmd = " \\copy %s FROM '%s' WITH CSV QUOTE AS '\"';\n";
+    char *sqlite_cmd = ".import '%s' %s\n";
 
     printf("Now execute the following SQL commands:\n");
     printf("** MySQL:\n");
@@ -249,6 +251,10 @@ void print_hint(state_t *state) {
     printf("** PostgreSQL:\n");
     printf(pgsql_cmd, "users", USERS_CSV_FILE);
     printf(pgsql_cmd, "rosterusers", ROSTERS_CSV_FILE);
+    printf("** SQLite: \n");
+    printf(".mode csv\n");
+    printf(sqlite_cmd, USERS_CSV_FILE, "users");
+    printf(sqlite_cmd, ROSTERS_CSV_FILE, "rosterusers");
   } else {
     char domain[BUFSIZE];
     replace(domain, state->domain, '.', "%2e");
