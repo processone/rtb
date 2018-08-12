@@ -114,6 +114,9 @@ int generate_users_csv(state_t *state) {
 }
 
 int generate_rosters_csv(state_t *state) {
+  if (!state->roster_size)
+    return 0;
+
   FILE *fd = fopen(ROSTERS_CSV_FILE, "w");
   if (!fd) {
     printf("Failed to open file %s for writing: %s\n", ROSTERS_CSV_FILE, strerror(errno));
@@ -181,6 +184,9 @@ int generate_user_files(state_t *state) {
 }
 
 int generate_roster_files(state_t *state) {
+  if (!state->roster_size)
+    return 0;
+
   int res = mkdir(ROSTERS_DIR, 0755);
   if (res && errno != EEXIST) {
     printf("res = %d\n", res);
@@ -236,6 +242,7 @@ int generate_roster_files(state_t *state) {
 }
 
 void print_hint(state_t *state) {
+  int have_rosters = state->roster_size;
   if (state->file_type == T_CSV) {
     char *mysql_cmd =
       " LOAD DATA LOCAL INFILE '%s'\n"
@@ -247,14 +254,17 @@ void print_hint(state_t *state) {
     printf("Now execute the following SQL commands:\n");
     printf("** MySQL:\n");
     printf(mysql_cmd, USERS_CSV_FILE, "users");
-    printf(mysql_cmd, ROSTERS_CSV_FILE, "rosterusers");
+    if (have_rosters)
+      printf(mysql_cmd, ROSTERS_CSV_FILE, "rosterusers");
     printf("** PostgreSQL:\n");
     printf(pgsql_cmd, "users", USERS_CSV_FILE);
-    printf(pgsql_cmd, "rosterusers", ROSTERS_CSV_FILE);
+    if (have_rosters)
+      printf(pgsql_cmd, "rosterusers", ROSTERS_CSV_FILE);
     printf("** SQLite: \n");
     printf(".mode csv\n");
     printf(sqlite_cmd, USERS_CSV_FILE, "users");
-    printf(sqlite_cmd, ROSTERS_CSV_FILE, "rosterusers");
+    if (have_rosters)
+      printf(sqlite_cmd, ROSTERS_CSV_FILE, "rosterusers");
   } else {
     char domain[BUFSIZE];
     replace(domain, state->domain, '.', "%2e");
@@ -325,11 +335,11 @@ state_t *mk_state(int argc, char *argv[]) {
     state->roster_size = atoi(argv[7]);
   else
     state->roster_size = (state->capacity >= 22) ? 20 : 2*((state->capacity / 2)-1);
-  if (state->roster_size <= 0 ||
+  if (state->roster_size < 0 ||
       state->roster_size >= state->capacity ||
       state->roster_size % 2) {
     printf("Invalid roster size: %s. "
-	   "It must be an even positive integer < capacity.\n", argv[7]);
+	   "It must be an even non-negative integer < capacity.\n", argv[7]);
     return NULL;
   }
   return state;

@@ -25,13 +25,8 @@
 		  lager,
 		  inets,
 		  crypto,
-		  asn1,
-		  public_key,
-		  ssl,
-		  ezlib,
-		  fast_tls,
-		  fast_yaml,
-		  xmpp]},
+		  p1_utils,
+		  fast_yaml]},
   {mod,          {rtb, []}},
   {env,          []}]}.
 

@@ -52,12 +52,19 @@
 -type state() :: #{}.
 -type seconds() :: non_neg_integer().
 -type milli_seconds() :: non_neg_integer().
+-type jid_pattern() :: {rtb:pattern(), binary(), rtb:pattern()}.
 
 %%%===================================================================
 %%% API
 %%%===================================================================
 load() ->
-    ok.
+    try
+	{ok, _} = application:ensure_all_started(ssl),
+	{ok, _} = application:ensure_all_started(xmpp),
+	ok
+    catch _:{badmatch, {error, _} = Err} ->
+	    Err
+    end.
 
 start(I, Opts, Servers, JustStarted) ->
     {_, S, _} = rtb_config:get_option(jid),
@@ -69,6 +76,7 @@ options() ->
      {negotiation_timeout, 100},
      {connect_timeout, 100},
      {message_body_size, 100},
+     {message_to, undefined},
      {reconnect_interval, 60},
      {message_interval, 600},
      {presence_interval, 600},
@@ -77,15 +85,15 @@ options() ->
      {proxy65_size, 10485760},
      {http_upload_interval, 600},
      {http_upload_size, undefined},
-     {starttls, <<"true">>},
-     {csi, <<"true">>},
-     {sm, <<"true">>},
-     {mam, <<"true">>},
-     {carbons, <<"true">>},
-     {blocklist, <<"true">>},
-     {roster, <<"true">>},
-     {rosterver, <<"true">>},
-     {private, <<"true">>},
+     {starttls, true},
+     {csi, true},
+     {sm, true},
+     {mam, true},
+     {carbons, true},
+     {blocklist, true},
+     {roster, true},
+     {rosterver, true},
+     {private, true},
      %% Required options
      jid,
      password].
@@ -100,24 +108,38 @@ stats() ->
      {'iq-out', fun rtb_stats:lookup/1},
      {'iq-in', fun rtb_stats:lookup/1}].
 
-prep_option(jid, Val) ->
-    case jid:decode(Val) of
-	#jid{luser = U, lserver = S, lresource = R} when U /= <<>> ->
-	    {jid, {U, S, R}}
-    end;
+prep_option(jid, J) when is_binary(J) ->
+    {jid, prep_jid(J)};
 prep_option(password, P) when is_binary(P) ->
-    {password, P};
+    {password, rtb:make_pattern(P)};
 prep_option(sasl_mechanisms, Ms) when is_list(Ms) ->
     {sasl_mechanisms,
      [list_to_binary(string:to_upper(binary_to_list(M))) || M <- Ms]};
 prep_option(message_body_size, I) when is_integer(I), I>=0 ->
     Data = list_to_binary(lists:duplicate(I, $x)),
     {message_body, Data};
+prep_option(message_to, J) when is_binary(J) ->
+    {message_to, prep_jid(J)};
+prep_option(message_to, undefined) ->
+    {message_to, undefined};
 prep_option(http_upload_size, undefined) ->
     {http_upload_size, undefined};
+prep_option(starttls, Bool) ->
+    case rtb_config:to_bool(Bool) of
+	true ->
+	    case rtb_config:get_option(certfile) of
+		undefined ->
+		    rtb:halt("Option 'starttls' is set to 'true' "
+			     "by option 'certfile' is not set", []);
+		_ ->
+		    {starttls, true}
+	    end;
+	false ->
+	    {starttls, false}
+    end;
 prep_option(Opt, Bool) when Opt == csi; Opt == rosterver; Opt == sm;
 			    Opt == mam; Opt == carbons; Opt == blocklist;
-			    Opt == roster; Opt == private; Opt == starttls ->
+			    Opt == roster; Opt == private ->
     {Opt, rtb_config:to_bool(Bool)};
 prep_option(Opt, I) when is_integer(I) andalso I>0 andalso
 			 (Opt == negotiation_timeout orelse
@@ -176,7 +198,8 @@ connect_timeout(_) ->
 %%% xmpp_stream_out callbacks
 %%%===================================================================
 init([State, {I, Opts, Servers, JustStarted}]) ->
-    {JID, Password} = make_jid(I, true),
+    JID = make_jid(rtb_config:get_option(jid), I),
+    Password = rtb:replace(rtb_config:get_option(password), I),
     process_flag(trap_exit, true),
     CertFile = rtb_config:get_option(certfile),
     NegTimeout = rtb_config:get_option(negotiation_timeout),
@@ -576,7 +599,7 @@ proxy65_get_callback(#{lang := Lang} = State,
 	    SID = <<(integer_to_binary(Size))/binary, $-,
 		    (p1_rand:get_string())/binary>>,
 	    case rtb_sm:random() of
-		{ok, {_, USR}} ->
+		{ok, {_, _, USR}} ->
 		    IQ = #iq{type = set, to = jid:make(USR),
 			     sub_els = [#bytestreams{sid = SID,
 						     hosts = StreamHosts}]},
@@ -653,8 +676,13 @@ proxy65_activate_callback(State, IQ, _, _) ->
 %%% Scheduled actions
 %%%===================================================================
 send_message(State) ->
-    I = rtb_pool:random(),
-    To = make_jid(I, false),
+    To = case rtb_config:get_option(message_to) of
+	     undefined ->
+		 I = rtb_pool:random(),
+		 make_jid(rtb_config:get_option(jid), I);
+	     Pattern ->
+		 make_jid(Pattern, maps:get(conn_id, State))
+	 end,
     Payload = rtb_config:get_option(message_body),
     Msg = #message{to = To, body = xmpp:mk_text(Payload),
 		   id = <<"message">>, type = chat},
@@ -979,7 +1007,7 @@ fail_iq_error(State, #iq{type = error, from = From} = IQ, Format) ->
 		<<>> -> jid:encode(BFrom);
 		_ ->
 		    {U, _, _} = rtb_config:get_option(jid),
-		    User = replace(U, "%", "*"),
+		    User = rtb:replace(U, <<"*">>),
 		    jid:encode(BFrom#jid{user = User, luser = User})
 	    end,
     Txt = io_lib:format(Format ++ ": ~s", [FromS, format_error(IQ)]),
@@ -1018,17 +1046,11 @@ cancel_timers(State) ->
 			  Key == upload_file;
 			  Key == proxy65_send_file;
 			  Key == disconnect ->
-	      cancel_timer(TRef),
+	      rtb:cancel_timer(TRef),
 	      false;
 	 (_, _) ->
 	      true
       end, State).
-
-cancel_timer(TRef) ->
-    erlang:cancel_timer(TRef),
-    receive {timeout, TRef, _} -> ok
-    after 0 -> ok
-    end.
 
 perform_http_upload(#{conn_options := ConnOpts} = State, Size, GetURL, PutURL) ->
     URL = binary_to_list(PutURL),
@@ -1043,31 +1065,27 @@ perform_http_upload(#{conn_options := ConnOpts} = State, Size, GetURL, PutURL) -
 -spec notify_file_receiver(state(), string(), non_neg_integer()) -> state().
 notify_file_receiver(State, GetURL, Size) ->
     case rtb_sm:random() of
-	{ok, {Pid, _}} ->
+	{ok, {Pid, _, _}} ->
 	    Pid ! {download_file, GetURL, Size};
 	{error, _} ->
 	    ok
     end,
     State.
 
--spec make_jid(integer(), boolean()) -> jid:jid() | {jid:jid(), binary()}.
-make_jid(I, WithPassword) ->
-    {U, S, R} = rtb_config:get_option(jid),
-    P = rtb_config:get_option(password),
-    {ok, Re} = re:compile("%"),
-    Num = integer_to_binary(I),
-    User = replace(U, Re, Num),
-    Resource = case R of
-		   <<>> -> <<"rtb">>;
-		   _ -> replace(R, Re, Num)
-	       end,
-    if WithPassword ->
-	    Password = replace(P, Re, Num),
-	    {jid:make(User, S, Resource), Password};
-       true ->
-	    jid:make(User, S, Resource)
+-spec prep_jid(binary()) -> jid_pattern().
+prep_jid(JID) ->
+    case jid:decode(JID) of
+	#jid{luser = U, lserver = Server, lresource = R} when U /= <<>> ->
+	    User = rtb:make_pattern(U),
+	    Resource = rtb:make_pattern(R),
+	    {User, Server, Resource}
     end.
 
--spec replace(binary(), re:mp() | string(), string() | binary()) -> binary().
-replace(String, Re, Iter) ->
-    re:replace(String, Re, Iter, [{return, binary}]).
+-spec make_jid(jid_pattern(), integer()) -> jid:jid().
+make_jid({U, Server, R}, I) ->
+    User = rtb:replace(U, I),
+    Resource = case R of
+		   <<>> -> <<"rtb">>;
+		   _ -> rtb:replace(R, I)
+	       end,
+    jid:make(User, Server, Resource).

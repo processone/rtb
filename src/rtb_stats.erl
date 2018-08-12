@@ -20,7 +20,7 @@
 -behaviour(p1_server).
 
 %% API
--export([start_link/0, incr/1, decr/1, set/2, lookup/1, hist/1]).
+-export([start_link/0, incr/1, decr/1, set/2, del/1, lookup/1, hist/1]).
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
@@ -46,6 +46,9 @@ decr(Counter) ->
 
 set(Key, Val) ->
     ets:insert(?MODULE, {Key, Val}).
+
+del(Key) ->
+    ets:delete(?MODULE, Key).
 
 lookup(Key) ->
     try ets:lookup_element(?MODULE, Key, 2)

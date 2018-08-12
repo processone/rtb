@@ -23,17 +23,25 @@
 %% Application callbacks
 -export([start/0, start/2, stop/0, stop/1, halt/0, halt/2]).
 %% Miscellaneous API
--export([random_server/0, format_list/1]).
+-export([random_server/0, format_list/1, replace/2, cancel_timer/1,
+	 make_pattern/1]).
 
 -callback load() -> ok | {error, any()}.
 -callback start(pos_integer(),
 		[gen_tcp:option()],
-		[{inet:hostname(), inet:port_number(), tcp | tls}],
+		[endpoint()],
 		boolean()) ->
     {ok, pid()} | {error, any()} | ignore.
 -callback options() -> [{atom(), any()} | atom()].
 -callback prep_option(atom(), any()) -> {atom(), any()}.
 -callback stats() -> [{atom(), integer()}].
+
+-type server() :: inet:hostname() | inet:ip_address().
+-type endpoint() :: {server(), inet:port_number(), boolean()}.
+-opaque pattern() :: [char() | current | {random, pool | sm} |
+		      {range, pos_integer(), pos_integer()}] |
+		     binary().
+-export_type([pattern/0]).
 
 %%%===================================================================
 %%% Application callbacks
@@ -63,16 +71,19 @@ stop(_State) ->
 %%%===================================================================
 %%% Miscellaneous functions
 %%%===================================================================
+-spec halt() -> no_return().
 halt() ->
     application:stop(sasl),
     application:stop(lager),
     halt(0).
 
+-spec halt(io:format(), list()) -> no_return().
 halt(Fmt, Args) ->
     Txt = io_lib:format(Fmt, Args),
     lager:critical("Benchmark failure: ~s", [Txt]),
     halt().
 
+-spec random_server() -> [endpoint()].
 random_server() ->
     Addrs = rtb_config:get_option(servers),
     case length(Addrs) of
@@ -82,6 +93,30 @@ random_server() ->
 	_ ->
 	    Addrs
     end.
+
+-spec replace(pattern(), pos_integer() | iodata()) -> binary().
+replace(Subj, _) when is_binary(Subj) ->
+    Subj;
+replace(Subj, I) when is_integer(I) ->
+    replace(Subj, integer_to_list(I));
+replace(Subj, Repl) ->
+    iolist_to_binary(
+      lists:map(
+	fun(current) ->
+		Repl;
+	   ({random, unique}) ->
+		integer_to_list(
+		  p1_time_compat:unique_integer([positive]));
+	   ({random, sm}) ->
+		case rtb_sm:random() of
+		    {ok, {_, I, _}} -> integer_to_list(I);
+		    {error, _} -> Repl
+		end;
+	   ({range, From, To}) ->
+		integer_to_list(p1_rand:uniform(From, To));
+	   (Char) ->
+		Char
+	end, Subj)).
 
 -spec format_list([iodata() | atom()]) -> binary().
 format_list([]) ->
@@ -94,6 +129,48 @@ format_list(L) ->
 		      iolist_to_binary(B)
 	      end, L),
     <<H/binary, (format_tail(T))/binary>>.
+
+-spec cancel_timer(undefined | reference()) -> ok.
+cancel_timer(undefined) ->
+    ok;
+cancel_timer(TRef) ->
+    erlang:cancel_timer(TRef),
+    receive {timeout, TRef, _} -> ok
+    after 0 -> ok
+    end.
+
+-spec make_pattern(binary()) -> pattern().
+make_pattern(S) ->
+    Parts = case re:run(S, "\\[([1-9][0-9]*)..([0-9]+)\\]") of
+		{match, [{Pos,Len},{F,FLen},{T,TLen}]} ->
+		    Head = binary:part(S, {0,Pos}),
+		    Tail = binary:part(S, {Pos+Len, size(S)-(Pos+Len)}),
+		    From = binary_to_integer(binary:part(S, {F,FLen})),
+		    To = binary_to_integer(binary:part(S, {T,TLen})),
+		    if From < To ->
+			    [Head, {range, From, To}, Tail];
+		       From == To ->
+			    [Head, integer_to_binary(From), Tail]
+		    end;
+		nomatch ->
+		    [S]
+	    end,
+    Pattern = lists:flatmap(
+		fun({_, _, _} = Range) ->
+			[Range];
+		   (Part) ->
+			nomatch = binary:match(Part, <<$[>>),
+			nomatch = binary:match(Part, <<$]>>),
+			lists:map(
+			  fun($%) -> current;
+			     ($*) -> {random, unique};
+			     ($?) -> {random, sm};
+			     (C) -> C
+			  end, binary_to_list(Part))
+		end, Parts),
+    try iolist_to_binary(Pattern)
+    catch _:_ -> Pattern
+    end.
 
 %%%===================================================================
 %%% Internal functions

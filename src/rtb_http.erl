@@ -76,7 +76,7 @@ do(#mod{method = Method, data = Data}) ->
 httpd_options() ->
     ServerRoot = rtb_config:get_option(www_dir),
     Port = rtb_config:get_option(www_port),
-    {_, Domain, _} = rtb_config:get_option(jid),
+    Domain = rtb_config:get_option(www_domain),
     DocRoot = filename:join(ServerRoot, "data"),
     [{port, Port},
      {server_root, ServerRoot},
@@ -85,7 +85,7 @@ httpd_options() ->
 		   {"png", "image/png"}]},
      {directory_index, ["index.html"]},
      {modules, [mod_alias, ?MODULE, mod_get, mod_head]},
-     {server_name, binary_to_list(Domain)}].
+     {server_name, Domain}].
 
 create_index_html(DocRoot) ->
     Mod = rtb_config:get_option(module),

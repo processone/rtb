@@ -61,7 +61,13 @@ start() ->
     application:set_env(os_mon, start_os_sup, false),
     application:set_env(os_mon, start_memsup, true),
     application:set_env(os_mon, start_disksup, false),    
-    application:ensure_all_started(os_mon).
+    case application:ensure_all_started(os_mon) of
+	{ok, _} = OK ->
+	    set_oom_watermark(),
+	    OK;
+	Err ->
+	    Err
+    end.
 
 excluded_apps() ->
     [os_mon, mnesia, sasl, stdlib, kernel].
@@ -305,6 +311,11 @@ kill_proc(Name) when is_atom(Name) ->
 kill_proc(Pid) ->
     exit(Pid, kill),
     Pid.
+
+-spec set_oom_watermark() -> ok.
+set_oom_watermark() ->
+    WaterMark = rtb_config:get_option(oom_watermark),
+    memsup:set_sysmem_high_watermark(WaterMark/100).
 
 -spec maybe_restart_app(atom()) -> any().
 maybe_restart_app(lager) ->

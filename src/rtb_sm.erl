@@ -36,8 +36,8 @@
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-register(I, Pid, {U, S, R}) ->
-    ets:insert(?MODULE, {I, {Pid, {U, S, R}}}).
+register(I, Pid, Val) ->
+    ets:insert(?MODULE, {I, {Pid, Val}}).
 
 unregister(I) ->
     try ets:delete(?MODULE, I)
@@ -46,7 +46,7 @@ unregister(I) ->
 
 lookup(I) ->
     try ets:lookup_element(?MODULE, I, 2) of
-	{Pid, USR} -> {ok, {Pid, USR}}
+	{Pid, Val} -> {ok, {Pid, I, Val}}
     catch _:badarg ->
 	    {error, notfound}
     end.

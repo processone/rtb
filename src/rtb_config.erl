@@ -23,6 +23,7 @@
 -export([start_link/0, get_option/1]).
 -export([options/0, prep_option/2]).
 -export([to_bool/1]).
+-export([fail_opt_val/2, fail_bad_val/2, fail_unknown_opt/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -48,8 +49,6 @@ init([]) ->
 	ok ->
 	    case check_limits() of
 		ok ->
-		    Mod = get_option(module),
-		    Mod:load(),
 		    {ok, #state{}};
 		{error, _Reason} ->
 		    rtb:halt()
@@ -83,15 +82,7 @@ load_config() ->
 	    lager:info("Loading configuration from ~s", [Path]),
 	    case parse_yaml(Path) of
 		{ok, Terms} ->
-		    Cfg = lists:map(
-			    fun({Opt, Val}) ->
-				    try {binary_to_atom(Opt, latin1), Val}
-				    catch _:badarg ->
-					    rtb:halt(
-					      "Invalid configuration option: ~s",
-					      [format_val(Opt)])
-				    end
-			    end, Terms),
+		    Cfg = parse_dict(Terms),
 		    do_load_config(Cfg);
 		{error, Reason} ->
 		    lager:error("Failed to read configuration from ~s: ~s",
@@ -107,12 +98,18 @@ do_load_config(Terms) ->
 	{_, Scenario} ->
 	    try prep_option(scenario, Scenario) of
 		{module, Module} ->
-		    Defined = get_defined(?MODULE) ++ get_defined(Module),
-		    NewTerms = merge_defaults(Terms, Defined, []),
-		    load_terms(NewTerms)
+		    case Module:load() of
+			ok ->
+			    Defined = get_defined(Module),
+			    NewTerms = merge_defaults(Terms, Defined, []),
+			    load_terms(NewTerms);
+			Err ->
+			    lager:error("Failed to load scenario due to "
+					"internal error: ~p", [Err]),
+			    {error, load_failed}
+		    end
 	    catch _:_ ->
-		    rtb:halt("Option 'scenario' has invalid value: ~s",
-			     [format_val(Scenario)])
+		    fail_opt_val(scenario, Scenario)
 	    end;
 	false ->
 	    rtb:halt("Missing required option: scenario", [])
@@ -127,45 +124,74 @@ parse_yaml(Path) ->
 	    Other
     end.
 
+parse_dict(Terms) ->
+    lists:map(
+      fun({Opt, Val}) ->
+	      try {binary_to_atom(Opt, latin1), Val}
+	      catch _:badarg ->
+		      rtb:halt(
+			"Invalid configuration option: ~s",
+			[format_val(Opt)])
+	      end
+      end, Terms).
+
 load_terms(Terms) ->
     lists:foreach(
       fun({Opt, Val, Mod}) ->
+	      lager:debug("Processing option ~s: ~p", [Opt, Val]),
 	      try Mod:prep_option(Opt, Val) of
 		  {NewOpt, NewVal} ->
 		      ets:insert(?MODULE, {NewOpt, NewVal})
 	      catch _:_ ->
-		      rtb:halt("Option '~s' has invalid value: ~s",
-			       [Opt, format_val(Val)])
+		      fail_opt_val(Opt, Val)
 	      end
       end, Terms).
 
 merge_defaults([{Opt, Val}|Defined], Predefined, Acc) ->
-    case lists:keytake(Opt, 1, Predefined) of
-	{value, T, Predefined1} ->
-	    case lists:keymember(Opt, 1, Acc) of
+    case lists:keyfind(Opt, 1, Predefined) of
+	false ->
+	    rtb:halt("Unknown option: ~s", [Opt]);
+	T ->
+	    case lists:member(Opt, Acc) of
 		true ->
 		    rtb:halt("Multiple definitions of option: ~s", [Opt]);
 		false ->
 		    Mod = lists:last(tuple_to_list(T)),
-		    merge_defaults(Defined, Predefined1, [{Opt, Val, Mod}|Acc])
-	    end;
-	false ->
-	    rtb:halt("Unknown option: ~s", [Opt])
+		    Predefined1 = lists:keyreplace(
+				    Opt, 1, Predefined, {Opt, Val, Mod}),
+		    merge_defaults(Defined, Predefined1, [Opt|Acc])
+	    end
     end;
-merge_defaults([], Predefined, Result) ->
-    case lists:partition(fun(T) -> tuple_size(T) == 2 end, Predefined) of
-	{[{Opt, _}|_], _} ->
-	    rtb:halt("Missing required option: ~s", [Opt]);
-	{[], Defaults} ->
-	    Result ++ Defaults
+merge_defaults([], Result, _) ->
+    case lists:partition(fun(T) -> tuple_size(T) == 2 end, Result) of
+	{[_|_] = Required, _} ->
+	    rtb:halt("Missing required option(s): ~s",
+		     [rtb:format_list([O || {O, _} <- Required])]);
+	{[], _} ->
+	    Result
     end.
 
 get_defined(Mod) ->
-    Opts = Mod:options(),
-    lists:map(
-      fun({Opt, Val}) -> {Opt, Val, Mod};
-	 (Opt) -> {Opt, Mod}
-      end, Opts).
+    Globals = options(),
+    Locals = Mod:options(),
+    {NewLocals, NewGlobals} =
+	lists:foldl(
+	  fun(Opt, {L, G}) when is_atom(Opt) ->
+		  case lists:keytake(Opt, 1, G) of
+		      {value, _, G1} -> {L -- [Opt], [Opt|G1]};
+		      false -> {L, G}
+		  end;
+	     (_, Acc) ->
+		  Acc
+	  end, {Locals, Globals}, Locals),
+    lists:keysort(1, lists:map(
+		       fun({Opt, Val}) -> {Opt, Val, ?MODULE};
+			  (Opt) -> {Opt, ?MODULE}
+		       end, NewGlobals)) ++
+    lists:keysort(1, lists:map(
+		       fun({Opt, Val}) -> {Opt, Val, Mod};
+			  (Opt) -> {Opt, Mod}
+		       end, NewLocals)).
 
 get_config_path() ->
     case application:get_env(rtb, config) of
@@ -259,9 +285,11 @@ check_limits() ->
 	    Err
     end.
 
--spec to_bool(integer() | binary()) -> boolean().
+-spec to_bool(integer() | binary() | boolean()) -> boolean().
 to_bool(1) -> true;
 to_bool(0) -> false;
+to_bool(false) -> false;
+to_bool(true) -> true;
 to_bool(S) when is_binary(S) ->
     case string:to_lower(binary_to_list(S)) of
 	"true" -> true;
@@ -277,6 +305,16 @@ format_val(YAML) ->
     catch _:_ -> io_lib:format("~p", [YAML])
     end.
 
+fail_opt_val(Opt, Val) ->
+    rtb:halt("Option '~s' has invalid value: ~s",
+	     [Opt, format_val(Val)]).
+
+fail_bad_val(What, Val) ->
+    rtb:halt("Invalid ~s: ~s", [What, format_val(Val)]).
+
+fail_unknown_opt(Opt) ->
+    rtb:halt("Unknown option: ~s", [Opt]).
+
 prep_servers([Server|Servers]) ->
     case http_uri:parse(Server) of
 	{ok, {Type, _, HostBin, Port, _, _}}
@@ -287,6 +325,19 @@ prep_servers([Server|Servers]) ->
 		       {ok, IP} -> IP;
 		       {error, _} -> Host
 		   end,
+	    case Type of
+		tls ->
+		    case get_option(certfile) of
+			undefined ->
+			    rtb:halt("Option 'certfile' is not set "
+				     "but it is assumed by URI ~s",
+				     [Server]);
+			_ ->
+			    ok
+		    end;
+		_ ->
+		    ok
+	    end,
 	    [{Addr, Port, Type == tls}|prep_servers(Servers)]
     end;
 prep_servers([]) ->
@@ -354,6 +405,8 @@ prep_option(stats_file, Path) ->
     {stats_file, binary_to_list(Path)};
 prep_option(oom_killer, B) ->
     {oom_killer, to_bool(B)};
+prep_option(oom_watermark, I) when is_integer(I), I>0, I<100 ->
+    {oom_watermark, I};
 prep_option(www_dir, Dir) ->
     Path = binary_to_list(Dir),
     case filelib:ensure_dir(filename:join(Path, "foo")) of
@@ -366,6 +419,8 @@ prep_option(www_dir, Dir) ->
     end;
 prep_option(www_port, P) when is_integer(P), P>0, P<65536 ->
     {www_port, P};
+prep_option(www_domain, <<_, _/binary>> = D) ->
+    {www_domain, binary_to_list(D)};
 prep_option(gnuplot, Exec) ->
     Path = binary_to_list(Exec),
     case string:strip(os:cmd(Path ++ " --version"), right, $\n) of
@@ -380,6 +435,8 @@ prep_option(gnuplot, Exec) ->
 		    erlang:error(badarg)
 	    end
     end;
+prep_option(certfile, undefined) ->
+    {certfile, undefined};
 prep_option(certfile, CertFile) ->
     Path = binary_to_list(CertFile),
     case file:open(Path, [read]) of
@@ -395,13 +452,15 @@ prep_option(certfile, CertFile) ->
 options() ->
     [{bind, []},
      {servers, []},
+     {certfile, undefined},
      {stats_file, filename:join(<<"log">>, <<"stats.log">>)},
-     {oom_killer, <<"true">>},
+     {oom_killer, true},
+     {oom_watermark, 80},
      {www_dir, <<"www">>},
      {www_port, 8080},
+     {www_domain, <<"localhost">>},
      {gnuplot, <<"gnuplot">>},
      %% Required options
      scenario,
      interval,
-     capacity,
-     certfile].
+     capacity].

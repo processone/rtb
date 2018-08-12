@@ -13,12 +13,15 @@ stress test all features defined in the
 
 # Status
 
-RTB is in an early stage of development: currently only XMPP protocol
-is implemented and support for
-[Multi-User Chat](https://xmpp.org/extensions/xep-0045.html) and
-[Personal Eventing Protocol](https://xmpp.org/extensions/xep-0163.html)
-is lacking. Also, "sane" defaults and what should be considered a
-"golden benchmark" is yet to be discussed within the XMPP community.
+RTB is in an early stage of development with the following limitations:
+- Supported MQTT version is 3.1.1 only.
+- For XMPP protocol support for
+  [Multi-User Chat](https://xmpp.org/extensions/xep-0045.html) and
+  [Personal Eventing Protocol](https://xmpp.org/extensions/xep-0163.html)
+  is lacking.
+
+Also, "sane" defaults and what should be considered a
+"golden benchmark" is yet to be discussed within the XMPP and MQTT community.
 However, the tool has been already battle-tested:
 [ProcessOne](https://www.process-one.net/) is using the tool to
 stress test [ejabberd SaaS](https://ejabberd-saas.com/) deployments.
@@ -51,10 +54,11 @@ $ make
 
 # Usage
 
-Once compiled, you will find `rtb.sh` and `rtb.yml.example` files. Copy
-`rtb.yml.example` to `rtb.yml`, edit it (see section below) and run:
+Once compiled, you will find `rtb.sh`, `rtb.yml.xmpp.example` and
+`rtb.yml.mqtt.example` files. Copy either `rtb.yml.mqtt.example` or
+`rtb.yml.xmpp.example` to `rtb.yml`, edit it (see section below) and run:
 ```
-$ cp rtb.yml.example rtb.yml
+$ cp rtb.yml.xmpp.example rtb.yml
 $ editor rtb.yml
 $ ./rtb.sh
 ```
@@ -75,6 +79,9 @@ by default. Edit `www_port` option to change the port if needed.
 
 During compilation a special script is created which aims to help
 you populating the server's database. It's located at `priv/bin/rtb_db`.
+
+## XMPP scenario
+
 The script is able to generate files for users and rosters in either
 CSV format (ejabberd) or in Lua format (Metronome/Prosody).
 In order to generate files for ejabberd execute something like:
@@ -98,10 +105,7 @@ password arguments must match those defined in the configuration file
 All configuration is performed via editing parameters of `rtb.yml` file.
 The file has [YAML](http://en.wikipedia.org/wiki/YAML) syntax.
 There are mandatory and optional parameters.
-The majority of parameters are optional, and, except `servers` and
-`bind` parameters you are unlikely to change them. Furthermore, for
-better performance comparison of different server implementations
-changing them is discouraged.
+The majority of parameters are optional.
 
 ## General parameters
 
@@ -111,7 +115,7 @@ These group of parameters are common for all scenarios.
 
 - **scenario**: `string()`
 
-  The benchmarking scenario to use. The only possible value so far is `xmpp`.
+  The benchmarking scenario to use. Available values are `mqtt` and `xmpp`.
 
 - **interval**: `non_neg_integer()`
 
@@ -122,12 +126,18 @@ These group of parameters are common for all scenarios.
 
   The total amount of connections to be spawned.
 
+- **servers**: `[uri()]`
+
+  This parameter is only mandatory for `mqtt` scenario. See next
+  section for the detailed description of the parameter.
+
+### Optional parameters
+
 - **certfile**: `string()`
 
   A path to a certificate file. The file MUST contain both a full certficate
-  chain and a private key in PEM format.
-
-### Optional parameters
+  chain and a private key in PEM format. This option is required in the
+  case when your scenario is configured to utilize TLS connections.
 
 - **servers**: `[uri()]`
 
@@ -330,3 +340,10 @@ The parameters described here are applied per single session.
   defined by the value until the authentication is succeed. The default is `[PLAIN]`.
   Note that for `EXTERNAL` authentication you need to have a valid certificate file
   defined in the `certfile` option.
+
+## Parameters of the MQTT scenario
+
+These group of parameters are specific to the MQTT scenario only.
+The parameters described here are applied per single session.
+
+**TODO**

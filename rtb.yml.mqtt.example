@@ -1,0 +1,36 @@
+###
+###              RTB configuration file
+###
+### The parameters used in this configuration file are explained at
+###
+###  https://github.com/processone/rtb/blob/master/README.md
+###
+### The configuration file is written in YAML
+###
+### *******************************************************
+### *******           !!! WARNING !!!               *******
+### *******     YAML IS INDENTATION SENSITIVE       *******
+### ******* MAKE SURE YOU INDENT SECTIONS CORRECTLY *******
+### *******************************************************
+###
+
+### Mandatory options: common for all scenarios
+scenario: mqtt
+interval: 100
+capacity: 10
+certfile: cert.pem
+
+### Mandatory options for MQTT scenario
+username: user%
+password: pass%
+client_id: rtb%
+servers:
+  - tcp://127.0.0.1:1883
+
+### An HTTP port for the statistics web interface
+### www_port: 8080
+
+### Local Variables:
+### mode: yaml
+### End:
+### vim: set filetype=yaml tabstop=8
