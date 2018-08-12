@@ -18,14 +18,15 @@
 scenario: mqtt
 interval: 100
 capacity: 10
-certfile: cert.pem
 
 ### Mandatory options for MQTT scenario
-username: user%
-password: pass%
 client_id: rtb%
 servers:
   - tcp://127.0.0.1:1883
+
+### Optional authentication
+### username: user%
+### password: pass%
 
 ### An HTTP port for the statistics web interface
 ### www_port: 8080

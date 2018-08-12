@@ -91,18 +91,18 @@ options() ->
      {disconnect_interval, 100},
      {reconnect_interval, 60},
      {publish_interval, 600},
-     {client_id, <<"rtb">>},
+     {username, <<>>},
+     {password, <<>>},
      {will, []},
      {publish, []},
      {subscribe, []},
      {clean_session, false},
      servers,
-     username,
-     password].
+     client_id].
 
 prep_option(client_id, <<_, _/binary>> = Val) ->
     {client_id, rtb:make_pattern(Val)};
-prep_option(username, <<_, _/binary>> = Val) ->
+prep_option(username, Val) when is_binary(Val) ->
     {username, rtb:make_pattern(Val)};
 prep_option(password, Val) when is_binary(Val) ->
     {password, rtb:make_pattern(Val)};
