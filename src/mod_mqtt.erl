@@ -81,7 +81,10 @@
 %%% API
 %%%===================================================================
 load() ->
-    ok.
+    case application:ensure_all_started(fast_tls) of
+	{ok, _} -> ok;
+	Err -> Err
+    end.
 
 start(I, Opts, Servers, JustStarted) ->
     p1_fsm:start(?MODULE, [I, Opts, Servers, JustStarted], []).
@@ -453,7 +456,7 @@ next_state(StateName, #state{timeout = Time} = State) ->
 
 stop(StateName, #state{just_started = true}, Reason)
   when StateName /= session_established ->
-    rtb:halt("Connection failed: ~s", [format_error(Reason)]);
+    rtb:halt("~s", [format_error(Reason)]);
 stop(_StateName, #state{reconnect_after = undefined} = State, Reason) ->
     unregister_session(State, Reason),
     State1 = send(State, #disconnect{}),
