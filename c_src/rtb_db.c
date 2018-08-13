@@ -523,7 +523,7 @@ int validate_state(state_t *state, char *user) {
       return -1;
     }
   } else if (state->roster_size) {
-    fprintf(stderr, "Option roster-size is not allowed for non-XMPP servers.\n");
+    fprintf(stderr, "Option roster-size is not allowed for XMPP servers.\n");
     return -1;
   }
   return 0;
