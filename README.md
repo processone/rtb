@@ -290,8 +290,9 @@ password: pass%
 
 - **disconnect_interval**: `pos_integer() | false`
 
-  An interval to wait before forcing disconnect. If stream management
-  is enabled (this is the default, see `sm` option), then the session
+  An interval to wait before forcing disconnect. The value is in **seconds**.
+  The default is 600 (10 minutes). If stream management is enabled
+  (this is the default, see `sm` option), then the session
   will be resumed after a random timeout between 1 and the value of
   `max` attribute of `<enabled/>` element reported by the server.
   Otherwise, the next reconnection attempt will be performed according
@@ -536,9 +537,9 @@ will:
 
 - **disconnect_interval**: `pos_integer() | false`
 
-  An interval to wait before forcing disconnect. The next reconnection
-  attempt will be performed according to the value and logic of
-  `reconnect_interval`.
+  An interval to wait before forcing disconnect. The value is in **seconds**.
+  The default is 600 (10 minutes). The next reconnection attempt will be
+  performed according to the value and logic of `reconnect_interval`.
 
 - **publish_interval**: `pos_integer() | false`
 

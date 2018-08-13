@@ -91,7 +91,7 @@ start(I, Opts, Servers, JustStarted) ->
 
 options() ->
     [{keep_alive, 60},
-     {disconnect_interval, 100},
+     {disconnect_interval, 600},
      {reconnect_interval, 60},
      {publish_interval, 600},
      {username, <<>>},
