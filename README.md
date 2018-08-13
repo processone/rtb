@@ -467,7 +467,7 @@ password: pass%
 
   Whether to set `CleanSession` flag or not. If the value is `true` then
   the MQTT session state (subscriptions and message queue) won't be kept
-  on the server between client reconnections and, thus, no state synchronization
+  at the server between client reconnections and, thus, no state synchronization
   will be performed when the session is re-established. The default is `false`.
 
 - **will**: `publish_options()`
