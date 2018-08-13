@@ -496,7 +496,6 @@ when the pattern of `username` parameter is `user%` and the value of `capacity`
 is 5, then the value of `username` will be evaluated into `user1` for first
 connection (i.e. the connection with identifier 1), `user2` for the second
 connection and `user5` for the last connection.
-
 Patterns with such identifier are supposed to be used as addressable identifiers of
 sessions.
 
@@ -514,7 +513,6 @@ For example, when there are already spawned 5 connections with 1,3 and 5
 connections being fully established (and, thus, internally registered as "sessions"),
 the pattern `user?` will yield into `user1`, `user3` or `user5`,
 but not into `user2` or `user4`.
-
 Patterns with such identifier are supposed to be used for sending/publishing
 messages to online users.
 
@@ -532,7 +530,6 @@ publish:
 The symbol '*' is replaced by a positive integer. The integer is guaranteed
 to be unique within the whole duration of the running benchmark. Note that
 the integer is **not** guaranteed to be monotonic.
-
 Patterns with such identifiers are supposed to be used to mark some content
 as unique within the benchmark lifetime.
 
@@ -547,8 +544,7 @@ publish:
 ### Range identifier
 
 The expression `[X..Y]` where `X` and `Y` are non-negative integers and `X =< Y`
-is replaced by a random integer within `[X..Y]` interval.
-
+is replaced by a random integer between `X` and `Y` (inclusively).
 Patterns with such expression are supposed to be used for sending/publishing/subscribing
 to a restricted subset of recipients or topics.
 
