@@ -49,7 +49,7 @@ To compile RTB you need:
  - GCC.
  - Libexpat 1.95 or higher.
  - Libyaml 0.1.4 or higher.
- - Erlang/OTP 18.0 or higher. Erlang/OTP 20 is recommended.
+ - Erlang/OTP 18.0 or higher.
  - OpenSSL 1.0.0 or higher.
  - Zlib 1.2.3 or higher.
  - gnuplot 4.4 or higher.
