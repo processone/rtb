@@ -413,7 +413,6 @@ void print_hint(state_t *state) {
   } else if (state->server_type == T_MOSQUITTO) {
     printf("Now set 'password_file' option of mosquitto.conf "
            "pointing to %s. Something like:\n"
-           " chown mosquitto:mosquitto /tmp/passwd\n"
            " echo 'allow_anonymous false' >> /etc/mosquitto/mosquitto.conf\n"
            " echo 'password_file /tmp/passwd' >> /etc/mosquitto/mosquitto.conf\n",
            PASSWD_FILE);
@@ -617,9 +616,9 @@ state_t *mk_state(int argc, char *argv[]) {
 }
 
 int main(int argc, char *argv[]) {
+  int res = -1;
   state_t *state = mk_state(argc, argv);
   if (state) {
-    int res = 0;
     switch (state->server_type) {
     case T_EJABBERD:
       res = generate_users_csv(state);
@@ -628,7 +627,7 @@ int main(int argc, char *argv[]) {
         if (!res)
           print_hint(state);
       }
-      return res;
+      break;
     case T_METRONOME:
     case T_PROSODY:
       res = generate_user_files(state);
@@ -637,13 +636,14 @@ int main(int argc, char *argv[]) {
         if (!res)
           print_hint(state);
       }
-      return res;
+      break;
     case T_MOSQUITTO:
       res = generate_passwd(state);
       if (!res)
         print_hint(state);
-      return res;
+      break;
     }
   }
-  return -1;
+  free(state);
+  return res;
 }
