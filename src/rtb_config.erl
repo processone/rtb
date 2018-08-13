@@ -86,7 +86,7 @@ load_config() ->
 		    do_load_config(Cfg);
 		{error, Reason} ->
 		    lager:error("Failed to read configuration from ~s: ~s",
-				[Path, file:format_error(Reason)]),
+				[Path, fast_yaml:format_error(Reason)]),
 		    {error, Reason}
 	    end;
 	{error, _} = Err ->
