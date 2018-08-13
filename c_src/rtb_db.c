@@ -494,6 +494,7 @@ state_t *mk_state(int argc, char *argv[]) {
                 optarg);
         return NULL;
       }
+      state->server = optarg;
       break;
     case 'f':
       if (!strcmp(optarg, "sql")) {
