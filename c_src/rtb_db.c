@@ -494,7 +494,7 @@ int validate_state(state_t *state, char *user) {
       state->user = user;
   } else {
     char *domain = strchr(user, '@');
-    if (domain && domain != user && (strlen(domain)-1 > 0)) {
+    if (domain && domain != user && (strlen(domain) > 1)) {
       state->user = calloc(1, strlen(user));
       state->domain = calloc(1, strlen(user));
       if (state->user && state->domain) {
