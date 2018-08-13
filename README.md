@@ -14,7 +14,7 @@ stress test all features defined in the
 # Status
 
 RTB is in an early stage of development with the following limitations:
-- Supported MQTT version is 3.1.1 only.
+- MQTT support is limited to v3.1.1 only.
 - For XMPP protocol support for
   [Multi-User Chat](https://xmpp.org/extensions/xep-0045.html) and
   [Personal Eventing Protocol](https://xmpp.org/extensions/xep-0163.html)
@@ -98,14 +98,14 @@ of the configuration file) and 20 is the number of items in rosters.
 Don't provide `-r` option or set it to zero (0) if you don't want to
 generate rosters.
 
-Follow the hint provided by the script to load generated files
+Follow the hint provided by the utility to load generated files
 into the server's spool/database. Note that `--username` and
 `--password` arguments must match those defined in the configuration file
 (see `jid` and `password` parameters).
 
 ## MQTT scenario
 
-Currently the script is only able to generate `passwd` file for Mosquitto.
+Currently the utility is only able to generate `passwd` file for Mosquitto.
 In order to generate the file execute something like:
 ```
 $ priv/bin/rtb_db -t mosquitto -c 1000 -u user% -p pass%
@@ -113,7 +113,7 @@ $ priv/bin/rtb_db -t mosquitto -c 1000 -u user% -p pass%
 Here 1000 is the total amount of users (must match `capacity` parameter
 of the configuration file).
 
-Follow the hint provided by the script to set up `passwd` file in Mosquitto
+Follow the hint provided by the utility to set up `passwd` file in Mosquitto
 configuration.
 
 Note that `--username` and `--password` arguments must match those defined
