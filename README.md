@@ -625,7 +625,7 @@ publish:
 
 ### Range identifier
 
-The expression `[X..Y]` where `X` and `Y` are non-negative integers and `X =< Y`
+The expression `[X..Y]` where `X` and `Y` are non-negative integers and `X ≤ Y`
 is replaced by a random integer between `X` and `Y` (inclusively).
 Patterns with such expression are supposed to be used for sending/publishing/subscribing
 to a restricted subset of recipients or topics.
