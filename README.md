@@ -36,6 +36,7 @@ RTB is in an early stage of development with the following limitations:
 
 Also, "sane" defaults and what should be considered a
 "golden benchmark" is yet to be discussed within the XMPP and MQTT community.
+
 However, the tool has been already battle-tested:
 [ProcessOne](https://www.process-one.net/) is using the tool to
 stress test [ejabberd SaaS](https://ejabberd-saas.com/) deployments.
