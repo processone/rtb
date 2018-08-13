@@ -47,11 +47,11 @@ typedef struct {
   char *server;
   server_type server_type;
   file_type file_type;
-  int capacity;
+  long int capacity;
   char *user;
   char *domain;
   char *password;
-  int roster_size;
+  long int roster_size;
 } state_t;
 
 char *timestamp() {
@@ -534,8 +534,9 @@ int validate_state(state_t *state, char *user) {
     if (state->roster_size < 0 ||
         state->roster_size >= state->capacity ||
         state->roster_size % 2) {
-      printf("Invalid roster size: '%s'\n"
-             "It must be an even non-negative integer < capacity.\n", optarg);
+      printf("Invalid roster size: %ld\n"
+             "It must be an even non-negative integer less than capacity.\n",
+             state->roster_size);
       return -1;
     }
   } else if (state->roster_size) {
@@ -548,6 +549,7 @@ int validate_state(state_t *state, char *user) {
 state_t *mk_state(int argc, char *argv[]) {
   int opt;
   char *user = NULL;
+  char *endptr;
   state_t *state = malloc(sizeof(state_t));
   if (!state) {
     fprintf(stderr, "Memory failure\n");
@@ -600,7 +602,7 @@ state_t *mk_state(int argc, char *argv[]) {
       }
       break;
     case 'c':
-      state->capacity = atoi(optarg);
+      state->capacity = strtol(optarg, NULL, 10);
       if (state->capacity <= 0 || state->capacity % 2) {
         fprintf(stderr,
                 "Invalid capacity: '%s'\n"
@@ -623,7 +625,14 @@ state_t *mk_state(int argc, char *argv[]) {
       }
       break;
     case 'r':
-      state->roster_size = atoi(optarg);
+      state->roster_size = strtol(optarg, &endptr, 10);
+      if (endptr == optarg || *endptr != '\0') {
+        fprintf(stderr,
+                "Invalid roster-size: '%s'\n"
+                "It must be an even non-negative integer less than capacity\n",
+                optarg);
+        return NULL;
+      }
       break;
     case 'v':
       printf("rtb_db %s\n", VERSION);
