@@ -11,6 +11,20 @@ from statistics of real world servers) and it is able to
 stress test all features defined in the
 [XMPP Compliance Suite 2018](https://xmpp.org/extensions/xep-0387.html)
 
+**Table of Contents**:
+1. [Status](#status)
+2. [System requirements](#system-requirements)
+3. [Compiling](#compiling)
+4. [Usage](#usage)
+5. [Database population](#database-population)
+   1. [XMPP scenario](#xmpp-scenario)
+   2. [MQTT scenario](#mqtt-scenario)
+6. [Configuration](#configuration)
+   1. [General parameters](#general-parameters)
+   2. [Parameters of the XMPP scenario](#parameters-of-the-xmpp-scenario)
+   3. [Parameters of the MQTT scenario](#parameters-of-the-mqtt-scenario)
+   4. [Patterns](#patterns)
+
 # Status
 
 RTB is in an early stage of development with the following limitations:
