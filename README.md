@@ -139,24 +139,19 @@ These group of parameters are common for all scenarios.
 - **interval**: `non_neg_integer()`
 
   The option is used to set a timeout to wait before spawning
-  the next connection. The timeout is in **milliseconds**.
+  the next connection. The value is in **milliseconds**.
 
 - **capacity**: `pos_integer()`
 
-  The total amount of connections to be spawned.
-
-- **servers**: `[uri()]`
-
-  This parameter is only mandatory for `mqtt` scenario. See next
-  section for the detailed description of the parameter.
-
-### Optional parameters
+  The total amount of connections to be spawned, starting from 1.
 
 - **certfile**: `string()`
 
   A path to a certificate file. The file MUST contain both a full certficate
-  chain and a private key in PEM format. This option is required in the
-  case when your scenario is configured to utilize TLS connections.
+  chain and a private key in PEM format.
+
+  The option is only mandatory in the case when your scenario is configured
+  to utilize TLS connections.
 
 - **servers**: `[uri()]`
 
@@ -170,12 +165,14 @@ These group of parameters are common for all scenarios.
   part: excessive DNS lookups may create significant overhead for the
   benchmarking tool itself.
 
-  The default for XMPP scenario is empty list which means server(s) endpoint(s)
+  The option is only mandatory for MQTT scenario, because there are no well
+  established mechanisms to locate MQTT servers.
+
+  For XMPP scenario the default is empty list which means server endpoints
   will be located according to RFC6120 procedure (that is DNS A/AAAA/SRV lookups).
   Leaving the default alone is also not recommended for the reason described above.
 
-  For MQTT scenario the option is mandatory because there are no well established
-  mechanisms to locate MQTT servers.
+### Optional parameters
 
 - **bind**: `[ip_address()]`
 
@@ -211,19 +208,16 @@ The parameters described here are applied per single session.
 
 ### Mandatory parameters
 
-- **jid**: `string()`
+- **jid**: `pattern()`
 
   A pattern for an XMPP address: bare or full. If it's bare, the default
-  `rtb` resource will be used. The pattern may contain `%` symbol which
-  will be replaced by the current connection number. For example, if
-  the pattern is `user%@domain.tld/res%` and `capacity` is 5 then
-  the following array of XMPP addresses will be generated:
-  `user1@domain.tld/res1`, `user2@domain.tld/res2`, `...`, `user5@domain.tld/res5`.
+  `rtb` resource will be used. Refer to [Patterns](#patterns) section for
+  the detailed explanation of possible pattern values.
 
-- **password**: `string()`
+- **password**: `pattern()`
 
-  The pattern for a password. The pattern may contain `%` symbol with the
-  same meaning as in `jid` option.
+  The pattern for a password. Refer to [Patterns](#patterns) section for
+  the detailed explanation of possible pattern values.
 
 ### Optional parameters
 
@@ -288,7 +282,13 @@ The parameters described here are applied per single session.
   this file uploads completely. The default is 600 (10 minutes).
   See also `http_upload_size` option.
 
-#### Parameters for size control
+#### Parameters for payload/size control
+
+- **message_to**: `pattern()`
+
+  The pattern of a message `to` attribute. By default the pattern from
+  `jid` parameter is used. Refer to [Patterns](#patterns) section for
+  the detailed explanation of possible pattern values.
 
 - **message_body_size**: `non_neg_integer()`
 
@@ -369,4 +369,116 @@ The parameters described here are applied per single session.
 These group of parameters are specific to the MQTT scenario only.
 The parameters described here are applied per single session.
 
-**TODO**
+### Mandatory parameters
+
+- **client_id**: `pattern()`
+
+  A pattern for an MQTT Client ID. Refer to [Patterns](#patterns) section for
+  the detailed explanation of possible pattern values.
+
+### Optional parameters
+
+#### Authentication parameters
+
+- **username**: `pattern()`
+
+  A pattern for a user name. Refer to [Patterns](#patterns) section for
+  the detailed explanation of possible pattern values.
+
+- **password**: `pattern()`
+
+  The pattern for a password. Refer to [Patterns](#patterns) section for
+  the detailed explanation of possible pattern values.
+
+#### Parameters for session control
+
+- **clean_session**: `true | false`
+
+  Whether to set `CleanSession` flag or not. If the value is `true` then
+  the MQTT session state (subscriptions and message queue) won't be kept
+  on the server between client reconnections and, thus, no state synchronization
+  will be performed when the session is re-established. The default is `false`.
+
+- **will**: `publish_options()`
+
+  The format of a Will Message. The parameter consists of a list of publish
+  options. See `publish` parameter description. The default is empty will.
+
+#### Parameters for PUBLISH/SUBSCRIBE
+
+- **publish**: `publish_options()`
+
+  The format of a PUBLISH message. Only makes sense when `publish_interval` is
+  not set to `false`. The format is described by a group of sub-options:
+
+  - **qos**: `0..2`
+
+    Quality of Service. The default is 0.
+
+  - **retain**: `true | false`
+
+    Whether the message should be retained or not. The default is `false`.
+
+  - **topic**: `pattern()`
+
+    The pattern for a topic. Refer to [Patterns](#patterns) section for
+    the detailed explanation of possible pattern values.
+
+  - **message**: `pattern() | non_neg_integer()`
+
+    The pattern or the size of a message payload. If it's an integer
+    then the payload of the given size will be randomly generated every time
+    a message is about to be sent. Refer to [Patterns](#patterns) section for
+    the detailed explanation of possible pattern values.
+
+  Example:
+  ```yaml
+    publish:
+      qos: 1
+      retain: true
+      topic: /rtb/?
+      message: 32
+  ```
+- **subscribe**: `[{pattern(), 0..2}]`
+
+  The format of a SUBSCRIBE message. Refer to [Patterns](#patterns) section
+  for the detailed explanation of possible pattern values. The message is sent
+  immediately after successful authentication of a newly created session.
+  The default is empty list, i.e. no SUBSCRIBE messages will be sent.
+
+  Example:
+  ```yaml
+    subscribe:
+      /foo/bar/%: 2
+      $SYS/#: 1
+      /rtb/[1..10]: 0
+   ```
+
+#### Parameters for timings control
+
+- **keep_alive**: `pos_integer()`
+
+  The interval to send keep-alive pings. The value is in **seconds**.
+  The default is 60 (seconds).
+
+- **reconnect_interval**: `pos_integer() | false`
+
+  A timeout to wait before another reconnection attempt after previous
+  connection failure. Initially it is picked randomly between `1` and this
+  configured value. Then, exponential back off is applied between several
+  consecutive connection failures. The value is in **seconds**.
+  It can be set to `false` to disable reconnection attemps completely:
+  thus the failed session will never be restored.
+  The default is 60 (1 minute).
+
+- **disconnect_interval**: `pos_integer() | false`
+
+  An interval to wait before forcing disconnect. The next reconnection
+  attempt will be performed according to the value and logic of
+  `reconnect_interval`.
+
+- **publish_interval**: `pos_integer() | false`
+
+  An interval to send PUBLISH messages at. Can be set to `false` in order
+  to disable sending PUBLISH messages completely. The value is in **seconds**.
+  The default is 600 (10 minutes).
