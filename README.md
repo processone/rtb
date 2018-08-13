@@ -482,3 +482,79 @@ The parameters described here are applied per single session.
   An interval to send PUBLISH messages at. Can be set to `false` in order
   to disable sending PUBLISH messages completely. The value is in **seconds**.
   The default is 600 (10 minutes).
+
+## Patterns
+
+Many configuration options allow to set patterns as their values. The pattern
+is just a regular string with a special treatment of symbols `%`, `*`, `?`,
+`[` and `]`.
+
+### Current identifier
+
+The symbol '%' is replaced by the current identifier of the connection. For example,
+when the pattern of `username` parameter is `user%` and the value of `capacity`
+is 5, then the value of `username` will be evaluated into `user1` for first
+connection (i.e. the connection with identifier 1), `user2` for the second
+connection and `user5` for the last connection.
+
+Patterns with such identifier are supposed to be used as addressable identifiers of
+sessions.
+
+Example:
+```yaml
+jid: user%@domain.tld
+client_id: client%
+password: pass%
+```
+
+### Random session identifier
+
+The symbol '?' is replaced by an identifier of random available session.
+For example, when there are already spawned 5 connections with 1,3 and 5
+connections being fully established (and, thus, internally registered as "sessions"),
+the pattern `user?` will yield into `user1`, `user3` or `user5`,
+but not into `user2` or `user4`.
+
+Patterns with such identifier are supposed to be used for sending/publishing
+messages to online users.
+
+Example:
+```yaml
+message_to: user?@domain.tld
+publish:
+  ...
+  topic: /rtb/topic?
+  ...
+```
+
+### Unique identifier
+
+The symbol '*' is replaced by a positive integer. The integer is guaranteed
+to be unique within the whole duration of the running benchmark. Note that
+the integer is **not** guaranteed to be monotonic.
+
+Patterns with such identifiers are supposed to be used to mark some content
+as unique within the benchmark lifetime.
+
+Example:
+```yaml
+publish:
+  topic: /foo/bar
+  ...
+  message: "*"
+```
+
+### Range identifier
+
+The expression `[X..Y]` where `X` and `Y` are non-negative integers and `X =< Y`
+is replaced by a random integer within `[X..Y]` interval.
+
+Patterns with such expression are supposed to be used for sending/publishing/subscribing
+to a restricted subset of recipients or topics.
+
+Example:
+```yaml
+subscribe:
+  /rtb/topic/[1..10]: 2
+  /foo/bar[0..5]: 0
+```

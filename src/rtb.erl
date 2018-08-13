@@ -141,7 +141,7 @@ cancel_timer(TRef) ->
 
 -spec make_pattern(binary()) -> pattern().
 make_pattern(S) ->
-    Parts = case re:run(S, "\\[([1-9][0-9]*)..([0-9]+)\\]") of
+    Parts = case re:run(S, "\\[([0-9]+)..([0-9]+)\\]") of
 		{match, [{Pos,Len},{F,FLen},{T,TLen}]} ->
 		    Head = binary:part(S, {0,Pos}),
 		    Tail = binary:part(S, {Pos+Len, size(S)-(Pos+Len)}),
