@@ -571,15 +571,15 @@ Many configuration options allow to set patterns as their values. The pattern
 is just a regular string with a special treatment of symbols `%`, `*`, `?`,
 `[` and `]`.
 
-### Current identifier
+### Current connection identifier
 
 The symbol '%' is replaced by the current identifier of the connection. For example,
 when the pattern of `username` parameter is `user%` and the value of `capacity`
 is 5, then the value of `username` will be evaluated into `user1` for first
 connection (i.e. the connection with identifier 1), `user2` for the second
 connection and `user5` for the last connection.
-Patterns with such identifier are supposed to be used as addressable identifiers of
-sessions.
+Patterns with such identifier are supposed to address a connection within
+which this pattern is evaluated.
 
 Example:
 ```yaml
