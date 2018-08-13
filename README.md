@@ -120,7 +120,7 @@ into the server's spool/database. Note that `--username` and
 
 ## MQTT scenario
 
-Currently the utility is only able to generate `passwd` file for
+The utility is also able to generate `passwd` file for
 [Mosquitto](https://mosquitto.org/).
 In order to generate the file execute something like:
 ```
