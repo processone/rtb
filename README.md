@@ -172,6 +172,17 @@ These group of parameters are common for all scenarios.
   will be located according to RFC6120 procedure (that is DNS A/AAAA/SRV lookups).
   Leaving the default alone is also not recommended for the reason described above.
 
+Example:
+```yaml
+scenario: mqtt
+interval: 10
+capacity: 10000
+certfile: cert.pem
+servers:
+  - tls://127.0.0.1:8883
+  - tcp://192.168.1.1:1883
+```
+
 ### Optional parameters
 
 - **bind**: `[ip_address()]`
@@ -201,6 +212,18 @@ These group of parameters are common for all scenarios.
 
   The path to a gnuplot execution binary. The default is `gnuplot`.
 
+Example:
+```yaml
+bind:
+  - 192.168.1.1
+  - 192.168.1.2
+  - 192.168.1.3
+stats_file: /tmp/rtb/stats.log
+www_dir: /tmp/rtb/www
+www_port: 1234
+gnuplot: /opt/bin/gnuplot
+```
+
 ## Parameters of the XMPP scenario
 
 These group of parameters are specific to the XMPP scenario only.
@@ -218,6 +241,12 @@ The parameters described here are applied per single session.
 
   The pattern for a password. Refer to [Patterns](#patterns) section for
   the detailed explanation of possible pattern values.
+
+Example:
+```yaml
+jid: user%@domain.tld
+password: pass%
+```
 
 ### Optional parameters
 
@@ -364,6 +393,13 @@ The parameters described here are applied per single session.
   Note that for `EXTERNAL` authentication you need to have a valid certificate file
   defined in the `certfile` option.
 
+Example:
+```yaml
+sasl_mechanisms:
+  - PLAIN
+  - EXTERNAL
+```
+
 ## Parameters of the MQTT scenario
 
 These group of parameters are specific to the MQTT scenario only.
@@ -375,6 +411,11 @@ The parameters described here are applied per single session.
 
   A pattern for an MQTT Client ID. Refer to [Patterns](#patterns) section for
   the detailed explanation of possible pattern values.
+
+Example:
+```yaml
+client_id: rtb%
+```
 
 ### Optional parameters
 
@@ -390,6 +431,12 @@ The parameters described here are applied per single session.
   The pattern for a password. Refer to [Patterns](#patterns) section for
   the detailed explanation of possible pattern values.
 
+Example:
+```yaml
+username: user%
+password: pass%
+```
+
 #### Parameters for session control
 
 - **clean_session**: `true | false`
@@ -403,6 +450,16 @@ The parameters described here are applied per single session.
 
   The format of a Will Message. The parameter consists of a list of publish
   options. See `publish` parameter description. The default is empty will.
+
+Example:
+```yaml
+clean_session: true
+will:
+  qos: 2
+  retain: false
+  topic: /rtb/?
+  message: "*"
+```
 
 #### Parameters for PUBLISH/SUBSCRIBE
 
