@@ -53,8 +53,8 @@ init([]) ->
 		{error, _Reason} ->
 		    rtb:halt()
 	    end;
-	{error, Reason} ->
-	    {stop, Reason}
+	{error, _Reason} ->
+            rtb:halt()
     end.
 
 handle_call(_Request, _From, State) ->
