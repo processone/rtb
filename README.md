@@ -472,7 +472,7 @@ password: pass%
 
 - **will**: `publish_options()`
 
-  The format of a Will Message. The parameter consists of a list of publish
+  The format of a Client Will. The parameter consists of a list of publish
   options. See `publish` parameter description. The default is empty will.
 
 Example:
