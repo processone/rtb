@@ -441,9 +441,9 @@ void print_help() {
          "                     ejabberd, metronome, mosquitto, prosody\n"
          "  -c, --capacity     total number of accounts to generate;\n"
          "                     must be an even positive integer\n"
-         "  -u, --username     username pattern; may contain %% symbol;\n"
+         "  -u, --username     username pattern; must contain '%%' symbol;\n"
          "                     for XMPP servers must be in user@domain format\n"
-         "  -p, --password     password pattern; may contain %% symbol\n"
+         "  -p, --password     password pattern; may contain '%%' symbol\n"
          "  -f, --format       format of the storage: sql or flat\n"
          "  -r, --roster-size  number of items in rosters; for XMPP servers only;\n"
          "                     must be an even non-negative integer less than capacity\n"
@@ -600,6 +600,10 @@ state_t *mk_state(int argc, char *argv[]) {
               "The option must be presented in 'user@domain' format\n", user);
       return NULL;
     }
+  }
+  if (!strchr(state->user, '%')) {
+    fprintf(stderr, "The option 'username' must contain '%%' symbol\n");
+    return NULL;
   }
   if (state->server_type != T_MOSQUITTO) {
     if (state->roster_size < 0 ||
