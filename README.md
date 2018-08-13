@@ -77,28 +77,47 @@ by default. Edit `www_port` option to change the port if needed.
 
 # Database population
 
-During compilation a special script is created which aims to help
+During compilation a special utility is created which aims to help
 you populating the server's database. It's located at `priv/bin/rtb_db`.
+Run `priv/bin/rtb_db --help` to see available options.
 
 ## XMPP scenario
 
-The script is able to generate files for users and rosters in either
+The utility is able to generate files for users and rosters in either
 CSV format (ejabberd) or in Lua format (Metronome/Prosody).
 In order to generate files for ejabberd execute something like:
 ```
-$ priv/bin/rtb_db ejabberd sql 1000 user% domain.tld pass%
+$ priv/bin/rtb_db -t ejabberd -c 1000 -u user%@domain.tld -p pass% -r 20
 ```
 The same, but for Metronome/Prosody will look like:
 ```
-$ priv/bin/rtb_db prosody flat 1000 user% domain.tld pass%
+$ priv/bin/rtb_db -t prosody -c 1000 -u user%@domain.tld -p pass% -r 20
 ```
-where 1000 is the total amount of users (must match `capacity` parameter
-of the configuration file).
+Here 1000 is the total amount of users (must match `capacity` parameter
+of the configuration file) and 20 is the number of items in rosters.
+Don't provide `-r` option or set it to zero (0) if you don't want to
+generate rosters.
 
 Follow the hint provided by the script to load generated files
-into the server's spool/database. Note that user, domain and
-password arguments must match those defined in the configuration file
+into the server's spool/database. Note that `--username` and
+`--password` arguments must match those defined in the configuration file
 (see `jid` and `password` parameters).
+
+## MQTT scenario
+
+Currently the script is only able to generate `passwd` file for Mosquitto.
+In order to generate the file execute something like:
+```
+$ priv/bin/rtb_db -t mosquitto -c 1000 -u user% -p pass%
+```
+Here 1000 is the total amount of users (must match `capacity` parameter
+of the configuration file).
+
+Follow the hint provided by the script to set up `passwd` file in Mosquitto
+configuration.
+
+Note that `--username` and `--password` arguments must match those defined
+in the configuration file (see `username` and `password` parameters).
 
 # Configuration
 
