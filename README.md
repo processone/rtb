@@ -98,7 +98,8 @@ Run `priv/bin/rtb_db --help` to see available options.
 ## XMPP scenario
 
 The utility is able to generate files for users and rosters in either
-CSV format (ejabberd) or in Lua format (Metronome/Prosody).
+CSV format ([ejabberd](https://www.ejabberd.im/)) or in Lua format
+([Metronome](https://metronome.im/)/[Prosody](https://prosody.im/)).
 In order to generate files for ejabberd execute something like:
 ```
 $ priv/bin/rtb_db -t ejabberd -c 1000 -u user%@domain.tld -p pass% -r 20
@@ -119,7 +120,8 @@ into the server's spool/database. Note that `--username` and
 
 ## MQTT scenario
 
-Currently the utility is only able to generate `passwd` file for Mosquitto.
+Currently the utility is only able to generate `passwd` file for
+[Mosquitto](https://mosquitto.org/).
 In order to generate the file execute something like:
 ```
 $ priv/bin/rtb_db -t mosquitto -c 1000 -u user% -p pass%
