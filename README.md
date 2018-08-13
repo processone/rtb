@@ -315,9 +315,15 @@ password: pass%
 
 - **message_to**: `pattern()`
 
-  The pattern of a message `to` attribute. By default the pattern from
-  `jid` parameter is used. Refer to [Patterns](#patterns) section for
+  The pattern of a JID to which messages will be sent. By default
+  a random JID within benchmark capacity is picked (whether it is
+  already connected or not). Refer to [Patterns](#patterns) section for
   the detailed explanation of possible pattern values.
+
+  For example, to send messages to already connected JIDs, set:
+  ```yaml
+    message_to: user?@domain.tld
+  ```
 
 - **message_body_size**: `non_neg_integer()`
 
