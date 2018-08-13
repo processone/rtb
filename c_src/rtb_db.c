@@ -25,6 +25,7 @@
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 #include <openssl/buffer.h>
+#include <time.h>
 
 #define BUFSIZE 65535
 #define SALT_LEN 12
@@ -213,6 +214,7 @@ int generate_users_csv(state_t *state) {
 
   printf("Generating %s... ", USERS_CSV_FILE);
   fflush(stdout);
+  clock_t begin = clock();
   char row[BUFSIZE];
   int i;
   mk_user_csv_row(row, state);
@@ -223,7 +225,9 @@ int generate_users_csv(state_t *state) {
       return errno;
     }
   }
-  printf("done\n");
+  clock_t end = clock();
+  double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+  printf("done in %.3f secs\n", time_spent);
   return 0;
 }
 
@@ -240,6 +244,7 @@ int generate_rosters_csv(state_t *state) {
 
   printf("Generating %s... ", ROSTERS_CSV_FILE);
   fflush(stdout);
+  clock_t begin = clock();
   int i, j, next, prev;
   char row[BUFSIZE];
   mk_roster_csv_row(row, state);
@@ -257,7 +262,9 @@ int generate_rosters_csv(state_t *state) {
       }
     }
   }
-  printf("done\n");
+  clock_t end = clock();
+  double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+  printf("done in %.3f secs\n", time_spent);
   return 0;
 }
 
@@ -270,6 +277,7 @@ int generate_user_files(state_t *state) {
 
   printf("Generating accounts in %s... ", USERS_DIR);
   fflush(stdout);
+  clock_t begin = clock();
   int i;
   FILE *fd;
   int dir_len = strlen(USERS_DIR);
@@ -294,7 +302,9 @@ int generate_user_files(state_t *state) {
     }
     fclose(fd);
   }
-  printf("done\n");
+  clock_t end = clock();
+  double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+  printf("done in %.3f secs\n", time_spent);
   return 0;
 }
 
@@ -310,6 +320,7 @@ int generate_roster_files(state_t *state) {
 
   printf("Generating rosters in %s... ", ROSTERS_DIR);
   fflush(stdout);
+  clock_t begin = clock();
   int i, j, next, prev;
   FILE *fd;
   int dir_len = strlen(ROSTERS_DIR);
@@ -351,7 +362,9 @@ int generate_roster_files(state_t *state) {
     }
     fclose(fd);
   }
-  printf("done\n");
+  clock_t end = clock();
+  double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+  printf("done in %.3f secs\n", time_spent);
   return 0;
 }
 
@@ -366,6 +379,7 @@ int generate_passwd(state_t *state) {
 
   printf("Generating %s... ", PASSWD_FILE);
   fflush(stdout);
+  clock_t begin = clock();
   char user[BUFSIZE];
   char password[BUFSIZE];
   char buf1[BUFSIZE];
@@ -382,7 +396,9 @@ int generate_passwd(state_t *state) {
       return errno;
     }
   }
-  printf("done\n");
+  clock_t end = clock();
+  double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+  printf("done in %.3f secs\n", time_spent);
   return 0;
 }
 
