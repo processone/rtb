@@ -610,8 +610,8 @@ publish:
 ### Unique identifier
 
 The symbol '*' is replaced by a positive integer. The integer is guaranteed
-to be unique within the whole duration of the running benchmark. Note that
-the integer is **not** guaranteed to be monotonic.
+to be unique within the benchmark lifetime. Note that the integer is **not**
+guaranteed to be monotonic.
 Patterns with such identifiers are supposed to be used to mark some content
 as unique for further tracking (in logs or network dump).
 
