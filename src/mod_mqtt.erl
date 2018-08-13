@@ -683,7 +683,8 @@ prep_publish_opt({K, V}) ->
 	    catch _:_ -> rtb_config:fail_opt_val(retain, V)
 	    end;
 	topic when is_binary(V) ->
-	    try {#publish.topic, rtb:make_pattern(V)}
+	    try {#publish.topic,
+                 rtb:make_pattern(mod_mqtt_codec:topic(V))}
 	    catch _:_ -> rtb_config:fail_opt_val(topic, V)
 	    end;
 	message when is_integer(V), V>= 0 ->

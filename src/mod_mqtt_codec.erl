@@ -543,6 +543,8 @@ qos(QoS) ->
 -spec topic(binary()) -> binary().
 topic(<<>>) ->
     err(bad_topic);
+topic(<<$$, _/binary>>) ->
+    err(bad_topic);
 topic(Bin) when is_binary(Bin) ->
     ok = check_topic(Bin),
     ok = check_utf8(Bin),
