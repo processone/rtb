@@ -451,10 +451,87 @@ void print_help() {
          "  -v, --version      print version\n\n");
 }
 
+int validate_state(state_t *state, char *user) {
+  if (!state->server_type) {
+    fprintf(stderr, "Missing required option: -t\n");
+    return -1;
+  }
+  if (!state->capacity) {
+    fprintf(stderr, "Missing required option: -c\n");
+    return -1;
+  }
+  if (!user) {
+    fprintf(stderr, "Missing required option: -u\n");
+    return -1;
+  }
+  if (!state->password) {
+    fprintf(stderr, "Missing required option: -p\n");
+    return -1;
+  }
+  switch (state->file_type) {
+  case T_FLAT:
+    if (state->server_type == T_EJABBERD) {
+      fprintf(stderr, "Unexpected database type for ejabberd: flat\n"
+              "Currently only 'sql' is supported.\n");
+      return -1;
+    }
+    break;
+  case T_CSV:
+    if (state->server_type != T_EJABBERD) {
+      fprintf(stderr, "Unexpected database type for %s: sql\n"
+              "Currenty only 'flat' is supported.\n",
+              format_server_type(state->server_type));
+      return -1;
+    }
+    break;
+  default:
+    if (state->server_type == T_EJABBERD)
+      state->file_type = T_CSV;
+    else
+      state->file_type = T_FLAT;
+  }
+  if (state->server_type == T_MOSQUITTO) {
+      state->user = user;
+  } else {
+    char *domain = strchr(user, '@');
+    if (domain && domain != user && (strlen(domain)-1 > 0)) {
+      state->user = calloc(1, strlen(user));
+      state->domain = calloc(1, strlen(user));
+      if (state->user && state->domain) {
+        memcpy(state->user, user, domain-user);
+        strcpy(state->domain, domain+1);
+      } else {
+        fprintf(stderr, "Memory failure");
+        return -1;
+      }
+    } else {
+      fprintf(stderr, "Invalid username: '%s'\n"
+              "The option must be presented in 'user@domain' format\n", user);
+      return -1;
+    }
+  }
+  if (!strchr(state->user, '%')) {
+    fprintf(stderr, "The option 'username' must contain '%%' symbol\n");
+    return -1;
+  }
+  if (state->server_type != T_MOSQUITTO) {
+    if (state->roster_size < 0 ||
+        state->roster_size >= state->capacity ||
+        state->roster_size % 2) {
+      printf("Invalid roster size: '%s'\n"
+             "It must be an even non-negative integer < capacity.\n", optarg);
+      return -1;
+    }
+  } else if (state->roster_size) {
+    fprintf(stderr, "Option roster-size is not allowed for non-XMPP servers.\n");
+    return -1;
+  }
+  return 0;
+}
+
 state_t *mk_state(int argc, char *argv[]) {
   int opt;
   char *user = NULL;
-  char *domain = NULL;
   state_t *state = malloc(sizeof(state_t));
   if (!state) {
     fprintf(stderr, "Memory failure\n");
@@ -543,81 +620,11 @@ state_t *mk_state(int argc, char *argv[]) {
       return NULL;
     }
   }
-  if (!state->server_type) {
-    fprintf(stderr, "Missing required option: -t\n");
+
+  if (validate_state(state, user))
     return NULL;
-  }
-  if (!state->capacity) {
-    fprintf(stderr, "Missing required option: -c\n");
-    return NULL;
-  }
-  if (!user) {
-    fprintf(stderr, "Missing required option: -u\n");
-    return NULL;
-  }
-  if (!state->password) {
-    fprintf(stderr, "Missing required option: -p\n");
-    return NULL;
-  }
-  switch (state->file_type) {
-  case T_FLAT:
-    if (state->server_type == T_EJABBERD) {
-      fprintf(stderr, "Unexpected database type for ejabberd: flat\n"
-              "Currently only 'sql' is supported.\n");
-      return NULL;
-    }
-    break;
-  case T_CSV:
-    if (state->server_type != T_EJABBERD) {
-      fprintf(stderr, "Unexpected database type for %s: sql\n"
-              "Currenty only 'flat' is supported.\n",
-              format_server_type(state->server_type));
-      return NULL;
-    }
-    break;
-  default:
-    if (state->server_type == T_EJABBERD)
-      state->file_type = T_CSV;
-    else
-      state->file_type = T_FLAT;
-  }
-  if (state->server_type == T_MOSQUITTO) {
-      state->user = user;
-  } else {
-    domain = strchr(user, '@');
-    if (domain && domain != user && (strlen(domain)-1 > 0)) {
-      state->user = calloc(1, strlen(user));
-      state->domain = calloc(1, strlen(user));
-      if (state->user && state->domain) {
-        memcpy(state->user, user, domain-user);
-        strcpy(state->domain, domain+1);
-      } else {
-        fprintf(stderr, "Memory failure");
-        return NULL;
-      }
-    } else {
-      fprintf(stderr, "Invalid username: '%s'\n"
-              "The option must be presented in 'user@domain' format\n", user);
-      return NULL;
-    }
-  }
-  if (!strchr(state->user, '%')) {
-    fprintf(stderr, "The option 'username' must contain '%%' symbol\n");
-    return NULL;
-  }
-  if (state->server_type != T_MOSQUITTO) {
-    if (state->roster_size < 0 ||
-        state->roster_size >= state->capacity ||
-        state->roster_size % 2) {
-      printf("Invalid roster size: '%s'\n"
-             "It must be an even non-negative integer < capacity.\n", optarg);
-      return NULL;
-    }
-  } else if (state->roster_size) {
-    fprintf(stderr, "Option roster-size is not allowed for non-XMPP servers.\n");
-    return NULL;
-  }
-  return state;
+  else
+    return state;
 }
 
 int main(int argc, char *argv[]) {
