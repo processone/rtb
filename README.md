@@ -522,7 +522,8 @@ will:
   ```
 - **subscribe**: `[{pattern(), 0..2}]`
 
-  The format of a SUBSCRIBE message. Refer to [Patterns](#patterns) section
+  The format of a SUBSCRIBE message. It is represented as a list of
+  topic-filter/QoS pairs. Refer to [Patterns](#patterns) section
   for the detailed explanation of possible pattern values. The message is sent
   immediately after successful authentication of a newly created session.
   The default is empty list, i.e. no SUBSCRIBE messages will be sent.
