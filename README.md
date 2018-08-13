@@ -168,10 +168,14 @@ These group of parameters are common for all scenarios.
   This option is used to set a transport, address and port of the server(s)
   being tested. It's highly recommended to use IP addresses in `hostname`
   part: excessive DNS lookups may create significant overhead for the
-  benchmarking tool itself. The default is empty list which means the
-  used scenario will detect the server(s) endpoint(s) by its own mechanisms,
-  such as DNS SRV lookups. Leaving the default alone is also not recommended
-  for the reason described above.
+  benchmarking tool itself.
+
+  The default for XMPP scenario is empty list which means server(s) endpoint(s)
+  will be located according to RFC6120 procedure (that is DNS A/AAAA/SRV lookups).
+  Leaving the default alone is also not recommended for the reason described above.
+
+  For MQTT scenario the option is mandatory because there are no well established
+  mechanisms to locate MQTT servers.
 
 - **bind**: `[ip_address()]`
 
