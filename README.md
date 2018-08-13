@@ -634,5 +634,6 @@ Example:
 ```yaml
 subscribe:
   /rtb/topic/[1..10]: 2
-  /foo/bar[0..5]: 0
+publish:
+  topic: /rtb/topic/[1..10]
 ```
