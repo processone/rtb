@@ -501,7 +501,7 @@ int validate_state(state_t *state, char *user) {
         memcpy(state->user, user, domain-user);
         strcpy(state->domain, domain+1);
       } else {
-        fprintf(stderr, "Memory failure");
+        fprintf(stderr, "Memory failure\n");
         return -1;
       }
     } else {
