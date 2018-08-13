@@ -561,7 +561,7 @@ will:
 
 - **publish_interval**: `pos_integer() | false`
 
-  An interval to send PUBLISH messages at. Can be set to `false` in order
+  An interval between sending PUBLISH messages. Can be set to `false` in order
   to disable sending PUBLISH messages completely. The value is in **seconds**.
   The default is 600 (10 minutes).
 
