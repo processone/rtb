@@ -152,7 +152,11 @@ encode(#subscribe{id = ID, topic_filters = [_|_] = Filters}) when ID>0 ->
     Payload = encode_payload([<<ID:16>>|EncFilters]),
     <<8:4, 2:4, Payload/binary>>;
 encode(#suback{id = ID, codes = Codes}) ->
-    Payload = encode_payload([<<ID:16>>, Codes]),
+    Codes1 = [case Code of
+                  fail -> 16#80;
+                  _ -> Code
+              end || Code <- Codes],
+    Payload = encode_payload([<<ID:16>>, Codes1]),
     <<9:4, 0:4, Payload/binary>>;
 encode(#unsubscribe{id = ID, topic_filters = [_|_] = Filters}) when ID>0 ->
     EncFilters = [<<(size(Filter)):16, Filter/binary>> || Filter <- Filters],
