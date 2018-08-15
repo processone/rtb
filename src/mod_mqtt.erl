@@ -462,16 +462,16 @@ next_state(StateName, #state{timeout = Time} = State) ->
 stop(StateName, #state{just_started = true}, Reason)
   when StateName /= session_established ->
     rtb:halt("~s", [format_error(Reason)]);
-stop(_StateName, #state{reconnect_after = undefined} = State, Reason) ->
-    unregister_session(State, Reason),
+stop(StateName, #state{reconnect_after = undefined} = State, Reason) ->
+    unregister_session(StateName, State, Reason),
     State1 = send(State, #disconnect{}),
     {stop, normal, State1#state{stop_reason = Reason}};
 stop(disconnected, State, _Reason) ->
     next_state(disconnected, State);
-stop(_StateName, State, Reason) ->
+stop(StateName, State, Reason) ->
     lager:debug("Session #~B closed: ~s",
 		[State#state.conn_id, format_error(Reason)]),
-    unregister_session(State, Reason),
+    unregister_session(StateName, State, Reason),
     close_socket(State#state.socket),
     {Timeout, Factor} = State#state.reconnect_after,
     rtb:cancel_timer(State#state.disconnect_timer),
@@ -491,13 +491,13 @@ register_session(State) ->
 		     State#state.client_id}),
     State#state{just_started = false}.
 
-unregister_session(_State, Reason) ->
+unregister_session(StateName, _State, Reason) ->
     case Reason of
 	disconnected ->
 	    ok;
 	_ ->
 	    rtb_stats:incr('session-errors'),
-	    rtb_stats:incr({'session-error-reason', format_error(Reason)})
+	    rtb_stats:incr({'session-error-reason', {Reason, StateName}})
     end.
 
 send_subscribe(State) ->
