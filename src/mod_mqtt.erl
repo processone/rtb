@@ -431,7 +431,8 @@ terminate(Reason, _StateName, State) ->
 	      normal -> State#state.stop_reason;
 	      _ -> internal_server_error
 	  end,
-    lager:debug("Connection closed: ~p", [Why]).
+    lager:debug("Connection #~B closed: ~s",
+                [State#state.conn_id, format_error(Why)]).
 
 code_change(_OldVsn, StateName, State, _Extra) ->
     {_, StateName1, State1, Timeout} = next_state(StateName, State),
@@ -468,7 +469,7 @@ stop(_StateName, #state{reconnect_after = undefined} = State, Reason) ->
 stop(disconnected, State, _Reason) ->
     next_state(disconnected, State);
 stop(_StateName, State, Reason) ->
-    lager:debug("Session ~B closed: ~s",
+    lager:debug("Session #~B closed: ~s",
 		[State#state.conn_id, format_error(Reason)]),
     unregister_session(State, Reason),
     close_socket(State#state.socket),
