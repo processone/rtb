@@ -377,9 +377,17 @@ handle_packet(#puback{id = ID}, _StateName,
 handle_packet(#pubrec{id = ID}, StateName,
 	      #state{dup = #publish{id = ID, qos = 2}} = State) ->
     send(StateName, State#state{dup = undefined}, #pubrel{id = ID});
+handle_packet(#pubrec{id = ID}, StateName,
+              #state{dup = #pubrel{id = ID}} = State) ->
+    lager:debug("Got duplicated PUBREC with id=~B, resending PUBREL", [ID]),
+    send(StateName, State#state{dup = undefined}, #pubrel{id = ID});
 handle_packet(#pubcomp{id = ID}, _StateName,
-	      #state{dup = #pubrel{id = ID}} = State) ->
+              #state{dup = #pubrel{id = ID}} = State) ->
     resend(State#state{dup = undefined});
+handle_packet(#pubcomp{id = ID}, _StateName, State) ->
+    lager:debug("Ignoring unexpected PUBCOMP with id=~B: most likely "
+                "it's a repeated response to duplicated PUBREL", [ID]),
+    {ok, State};
 handle_packet(#publish{qos = 0}, _StateName, State) ->
     rtb_stats:incr('publish-in'),
     {ok, State};
@@ -401,14 +409,10 @@ handle_packet(#publish{qos = 2, id = ID, dup = Dup}, StateName, State) ->
 		     State#state{acks = Acks}
 	     end,
     send(StateName, State1, #pubrec{id = ID});
-handle_packet(#pubrel{id = ID} = Pkt, StateName, State) ->
-    case maps:take(ID, State#state.acks) of
-	{_, Acks} ->
-	    State1 = State#state{acks = Acks},
-	    send(StateName, State1, #pubcomp{id = ID});
-	error ->
-	    handle_unexpected_packet(Pkt, StateName, State)
-    end;
+handle_packet(#pubrel{id = ID}, StateName, State) ->
+    Acks = maps:remove(ID, State#state.acks),
+    State1 = State#state{acks = Acks},
+    send(StateName, State1, #pubcomp{id = ID});
 handle_packet(#pingresp{}, _StateName, State) ->
     {ok, State#state{waiting_pong = false}};
 handle_packet(Pkt, StateName, State) ->
