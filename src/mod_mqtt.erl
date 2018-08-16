@@ -51,6 +51,7 @@
 		conn_addrs       :: [{server(), inet:port_number(), boolean()}],
 		stop_reason      :: undefined | error_reason(),
 		just_started     :: boolean(),
+                subscribed       :: boolean(),
 		reconnect_after  :: undefined | {integer(), integer()},
 		disconnect_timer :: undefined | reference(),
 		publish_timer    :: undefined | reference(),
@@ -204,6 +205,7 @@ init([I, Opts, Servers, JustStarted]) ->
 		   reconnect_after = ReconnectAfter,
 		   clean_session = CleanSession,
 		   just_started = JustStarted,
+                   subscribed = false,
 		   id = p1_rand:uniform(65535),
 		   queue = p1_queue:new(ram, 100),
 		   codec = mod_mqtt_codec:new(infinity),
@@ -337,37 +339,36 @@ handle_info(Info, StateName, State) ->
 handle_packet(#connack{} = Pkt, waiting_for_connack, State) ->
     case Pkt#connack.code of
 	accepted ->
-	    ReconnectAfter = case State#state.reconnect_after of
-				 {Timeout, _} -> {Timeout, 1};
-				 undefined -> undefined
-			     end,
-	    CleanSession = rtb_config:get_option(clean_session),
+            CleanSession = rtb_config:get_option(clean_session),
 	    State1 = State#state{clean_session = CleanSession},
-	    State2 = schedule_all_actions(State1),
-	    State3 = State2#state{reconnect_after = ReconnectAfter},
-	    Res = if Pkt#connack.session_present ->
-			  resend(State3);
-		     true ->
-			  Q = p1_queue:clear(State#state.queue),
-			  State4 = State3#state{queue = Q,
-						acks = #{},
-						dup = undefined},
-			  send_subscribe(State4)
-		  end,
-	    case Res of
-		{ok, State5} ->
-		    {ok, register_session(State5)};
-		{error, _, _} = Err ->
-		    Err
-	    end;
+            State2 = case Pkt#connack.session_present of
+                         false ->
+                             Q = p1_queue:clear(State1#state.queue),
+                             State1#state{queue = Q,
+                                          acks = #{},
+                                          subscribed = false,
+                                          dup = undefined};
+                         true ->
+                             State1
+                     end,
+            subscribe(State2);
 	Code ->
 	    {error, State, {auth, Code}}
     end;
 handle_packet(Pkt, StateName, State) when StateName /= session_established ->
     handle_unexpected_packet(Pkt, StateName, State);
-handle_packet(#suback{id = ID}, _StateName,
-	      #state{dup = #subscribe{id = ID}} = State) ->
-    resend(State#state{dup = undefined});
+handle_packet(#suback{id = ID, codes = Codes} = Pkt, StateName,
+	      #state{dup = #subscribe{id = ID} = Sub} = State) ->
+    case [QoS || {_, QoS} <- Sub#subscribe.topic_filters] of
+        Codes ->
+            State1 = case State#state.subscribed of
+                         true -> State;
+                         false -> register_session(State)
+                     end,
+            resend(State1#state{dup = undefined, subscribed = true});
+        _ ->
+            handle_unexpected_packet(Pkt, StateName, State)
+    end;
 handle_packet(#unsuback{id = ID}, _StateName,
 	      #state{dup = #unsubscribe{id = ID}} = State) ->
     resend(State#state{dup = undefined});
@@ -486,10 +487,16 @@ stop(StateName, State, Reason) ->
     next_state(disconnected, State2).
 
 register_session(State) ->
-    rtb_sm:register(State#state.conn_id, self(),
-		    {State#state.username,
-		     State#state.client_id}),
-    State#state{just_started = false}.
+    ReconnectAfter = case State#state.reconnect_after of
+                         {Timeout, _} -> {Timeout, 1};
+                         undefined -> undefined
+                     end,
+    State1 = schedule_all_actions(State),
+    rtb_sm:register(State1#state.conn_id, self(),
+		    {State1#state.username,
+		     State1#state.client_id}),
+    State1#state{just_started = false,
+                 reconnect_after = ReconnectAfter}.
 
 unregister_session(StateName, _State, Reason) ->
     case Reason of
@@ -500,10 +507,21 @@ unregister_session(StateName, _State, Reason) ->
 	    rtb_stats:incr({'session-error-reason', {Reason, StateName}})
     end.
 
-send_subscribe(State) ->
+subscribe(#state{subscribed = true} = State) ->
+    State1 = register_session(State),
+    resend(State1);
+subscribe(State) ->
     case make_subscribe(State) of
-	undefined -> {ok, State};
-	Pkt -> send(session_established, State, Pkt)
+        undefined ->
+            State1 = register_session(State#state{subscribed = true}),
+            resend(State1);
+        Pkt ->
+            case State#state.dup of
+                #subscribe{} ->
+                    resend(State);
+                undefined ->
+                    send(session_established, State, Pkt)
+            end
     end.
 
 send(StateName, State, Pkt) when is_record(Pkt, subscribe) orelse
