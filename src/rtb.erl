@@ -24,7 +24,7 @@
 -export([start/0, start/2, stop/0, stop/1, halt/0, halt/2]).
 %% Miscellaneous API
 -export([random_server/0, format_list/1, replace/2, cancel_timer/1,
-	 make_pattern/1]).
+	 make_pattern/1, set_debug/0]).
 
 -callback load() -> ok | {error, any()}.
 -callback start(pos_integer(),
@@ -53,16 +53,21 @@ stop() ->
     application:stop(?MODULE).
 
 start(_StartType, _StartArgs) ->
-    case rtb_sup:start_link() of
-	{ok, SupPid} ->
-	    case rtb_watchdog:start() of
-		{ok, _} ->
-		    {ok, SupPid};
-		_Err ->
-		    halt()
-	    end;
-	_Err ->
-	    halt()
+    case start_apps() of
+        ok ->
+            case rtb_sup:start_link() of
+                {ok, SupPid} ->
+                    case rtb_watchdog:start() of
+                        {ok, _} ->
+                            {ok, SupPid};
+                        _Err ->
+                            halt()
+                    end;
+                _Err ->
+                    halt()
+            end;
+        Err ->
+            Err
     end.
 
 stop(_State) ->
@@ -71,6 +76,41 @@ stop(_State) ->
 %%%===================================================================
 %%% Miscellaneous functions
 %%%===================================================================
+start_apps() ->
+    try
+        LogRateLimit = 10000,
+        ok = application:load(lager),
+        application:set_env(lager, error_logger_hwm, LogRateLimit),
+        application:set_env(
+          lager, handlers,
+          [{lager_console_backend, info},
+           {lager_file_backend, [{file, "log/info.log"},
+                                 {level, info}, {size, 0}]}]),
+        application:set_env(lager, crash_log, "log/crash.log"),
+        application:set_env(lager, crash_log_size, 0),
+        {ok, _} = application:ensure_all_started(lager),
+        lists:foreach(
+          fun(Handler) ->
+                  lager:set_loghwm(Handler, LogRateLimit)
+          end, gen_event:which_handlers(lager_event)),
+        lists:foreach(
+          fun(App) ->
+                  {ok, _} = application:ensure_all_started(App)
+          end, [crypto, inets, p1_utils, fast_yaml])
+    catch _:{badmatch, Reason} ->
+            Reason
+    end.
+
+set_debug() ->
+    lists:foreach(
+      fun({lager_file_backend, _} = H) ->
+              lager:set_loglevel(H, debug);
+         (lager_console_backend = H) ->
+              lager:set_loglevel(H, debug);
+         (_) ->
+              ok
+      end, gen_event:which_handlers(lager_event)).
+
 -spec halt() -> no_return().
 halt() ->
     application:stop(sasl),

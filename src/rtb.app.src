@@ -20,13 +20,7 @@
   {vsn,          "1.0.0"},
   {modules,      []},
   {registered,   []},
-  {applications, [kernel,
-		  stdlib,
-		  lager,
-		  inets,
-		  crypto,
-		  p1_utils,
-		  fast_yaml]},
+  {applications, [kernel, stdlib]},
   {mod,          {rtb, []}},
   {env,          []}]}.
 

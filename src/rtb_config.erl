@@ -450,21 +450,10 @@ prep_option(certfile, CertFile) ->
     end;
 prep_option(debug, Debug) ->
     case to_bool(Debug) of
-        false -> {debug, false};
+        false ->
+            {debug, false};
         true ->
-            lists:foreach(
-              fun({lager_file_backend, Path} = H) ->
-                      case filename:basename(Path) of
-                          "console.log" ->
-                              lager:set_loglevel(H, debug);
-                          _ ->
-                              ok
-                      end;
-                 (lager_console_backend = H) ->
-                      lager:set_loglevel(H, debug);
-                 (_) ->
-                      ok
-              end, gen_event:which_handlers(lager_event)),
+            rtb:set_debug(),
             {debug, true}
     end.
 
