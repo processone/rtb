@@ -837,6 +837,8 @@ connect(Addrs, Opts, Time) ->
     do_connect(Addrs, Opts, Timeout, {dns, nxdomain}).
 
 do_connect([{Addr, Port, TLS, Family}|Addrs], Opts, Timeout, _Err) ->
+    lager:debug("Connecting to ~s:~B (tls = ~p)",
+                [inet_parse:ntoa(Addr), Port, TLS]),
     case gen_tcp:connect(Addr, Port, sockopts(Family, Opts), Timeout) of
         {ok, Sock} ->
 	    case TLS of
