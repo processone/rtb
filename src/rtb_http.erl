@@ -92,7 +92,8 @@ create_index_html(DocRoot) ->
     Data = ["<!DOCTYPE html><html><body>",
 	    lists:map(
 	      fun({F, _}) ->
-		      ["<img src='/", atom_to_list(F), ".png'>"]
+		      ["<img src='/", atom_to_list(F), ".png'>",
+                       "<img src='/", atom_to_list(F), "-rate.png'>"]
 	      end, Mod:stats()),
 	    "</body></html>"],
     File = filename:join(DocRoot, "index.html"),

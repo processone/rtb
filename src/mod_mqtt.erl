@@ -146,14 +146,12 @@ prep_option(Opt, Val) when Opt == reconnect_interval;
 stats() ->
     [{'sessions', fun(_) -> rtb_sm:size() end},
      {'session-errors', fun rtb_stats:lookup/1},
-     {'publish-diff',
-      fun(_) ->
-     	      rtb_stats:lookup('publish-out') - rtb_stats:lookup('publish-in')
-      end},
+     %% {'publish-diff',
+     %%  fun(_) ->
+     %% 	      rtb_stats:lookup('publish-out') - rtb_stats:lookup('publish-in')
+     %%  end},
      {'publish-in', fun rtb_stats:lookup/1},
-     {'publish-out', fun rtb_stats:lookup/1},
-     {'publish-dup-in', fun rtb_stats:lookup/1},
-     {'publish-dup-out', fun rtb_stats:lookup/1}].
+     {'publish-out', fun rtb_stats:lookup/1}].
 
 -spec format_error(error_reason()) -> string().
 format_error(disconnected) ->
@@ -392,16 +390,10 @@ handle_packet(#pubcomp{id = ID}, _StateName, State) ->
 handle_packet(#publish{qos = 0}, _StateName, State) ->
     rtb_stats:incr('publish-in'),
     {ok, State};
-handle_packet(#publish{qos = 1, id = ID, dup = Dup}, StateName, State) ->
+handle_packet(#publish{qos = 1, id = ID}, StateName, State) ->
     rtb_stats:incr('publish-in'),
-    if Dup -> rtb_stats:incr('publish-dup-in');
-       true -> ok
-    end,
     send(StateName, State, #puback{id = ID});
-handle_packet(#publish{qos = 2, id = ID, dup = Dup}, StateName, State) ->
-    if Dup -> rtb_stats:incr('publish-dup-in');
-       true -> ok
-    end,
+handle_packet(#publish{qos = 2, id = ID}, StateName, State) ->
     State1 = case maps:is_key(ID, State#state.acks) of
 		 true -> State;
 		 false ->
@@ -557,7 +549,7 @@ send(_StateName, State, Pkt) ->
 
 resend(#state{dup = undefined} = State) ->
     case p1_queue:out(State#state.queue) of
-	{{value, #publish{qos = 0}} = Pkt, Q} ->
+	{{value, #publish{qos = 0} = Pkt}, Q} ->
 	    State1 = send(State#state{queue = Q}, Pkt),
 	    resend(State1);
 	{{value, Pkt}, Q} ->
@@ -572,9 +564,7 @@ resend(#state{dup = Pkt} = State) ->
 send(#state{socket = {SockMod, Sock} = Socket} = State, Pkt) ->
     lager:debug("Send MQTT packet:~n~s", [pp(Pkt)]),
     case Pkt of
-	#publish{dup = true} ->
-	    rtb_stats:incr('publish-dup-out');
-	#publish{} ->
+	#publish{dup = false} ->
 	    rtb_stats:incr('publish-out');
 	_ ->
 	    ok

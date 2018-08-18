@@ -30,7 +30,8 @@ render(Field) ->
     OutDir = rtb_http:docroot(),
     Fields = [atom_to_list(F) || {F, _} <- Mod:stats()],
     Position = position(Field, Fields),
-    render(Field, Path, OutDir, Position).
+    render(Field, Path, OutDir, Position),
+    render_rate(Field, Path, OutDir, Position).
 
 %%%===================================================================
 %%% Internal functions
@@ -41,11 +42,31 @@ render(Field, Path, Dir, N) ->
     Gnuplot = rtb_config:get_option(gnuplot),
     Cmds = ["set title '" ++ Field ++ "'",
 	    "set grid",
-	    "set style line 1 linecolor rgb '#0060ad' linetype 1 linewidth 2",
-	    "set terminal png enhanced",
+	    "set style line 1 linecolor rgb '#0060ad' linetype 1",
+	    "set terminal png small size 400,300",
 	    "set output '" ++ OutFile ++ "'",
 	    "plot '" ++ Path ++ "' using 1:" ++ Pos ++
 		" with lines linestyle 1 notitle"],
+    os:cmd(Gnuplot ++ " -e \"" ++ string:join(Cmds, "; ") ++ "\""),
+    ok.
+
+render_rate(Field, Path, Dir, N) ->
+    OutFile = filename:join(Dir, Field ++ "-rate.png"),
+    Pos = integer_to_list(N),
+    Gnuplot = rtb_config:get_option(gnuplot),
+    Cmds = ["set title '" ++ Field ++ "-rate'",
+	    "set grid",
+            "delta_v(time, val) = (delta_val = (prev_val == 0) ? 0 : val - prev_val,"
+            "                      delta_time = (prev_time == 0) ? 1: time - prev_time, "
+            "                      delta = delta_val/delta_time, "
+            "                      prev_time = time, prev_val = val, delta)",
+            "prev_time = 0",
+            "prev_val = 0",
+	    "set style line 1 linecolor rgb '#0060ad' linetype 1",
+	    "set terminal png small size 400,300",
+	    "set output '" ++ OutFile ++ "'",
+	    "plot '" ++ Path ++ "' using 1:(delta_v(\\$1, \\$" ++ Pos ++
+		")) with lines linestyle 1 notitle"],
     os:cmd(Gnuplot ++ " -e \"" ++ string:join(Cmds, "; ") ++ "\""),
     ok.
 
