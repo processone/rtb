@@ -20,8 +20,6 @@ distclean: clean
 	rm -rf dialyzer
 
 test: all
-	mkdir -p .eunit/priv/bin
-	cp priv/bin/rtb .eunit/priv/bin/
 	$(REBAR) -v skip_deps=true eunit
 
 xref: all
