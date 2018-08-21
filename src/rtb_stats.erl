@@ -25,7 +25,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
--define(INTERVAL, timer:seconds(5)).
+-define(INTERVAL, timer:seconds(1)).
 
 -record(state, {mod  :: module(),
 		fd   :: file:fd(),
@@ -79,8 +79,8 @@ init([]) ->
 		       time = p1_time_compat:monotonic_time(seconds)},
 	ok = log(State),
 	erlang:send_after(?INTERVAL, self(), log),
-	lager:info("Dumping statistics to ~s every ~B seconds",
-		   [Path, ?INTERVAL div 1000]),
+	lager:debug("Dumping statistics to ~s every ~B second(s)",
+                    [Path, ?INTERVAL div 1000]),
 	{ok, State}
     catch _:{badmatch, {error, Why}} ->
 	    lager:critical("Failed to read/write file ~s: ~s",

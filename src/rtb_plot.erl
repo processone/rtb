@@ -56,7 +56,7 @@ render_rate(Field, Path, Dir, N) ->
     Gnuplot = rtb_config:get_option(gnuplot),
     Cmds = ["set title '" ++ Field ++ "-rate'",
 	    "set grid",
-            "delta_v(time, val) = (delta_val = (prev_val == 0) ? 0 : val - prev_val,"
+            "delta_v(time, val) = (delta_val = (prev_val == 0) ? 0 : abs(val - prev_val),"
             "                      delta_time = (prev_time == 0) ? 1: time - prev_time, "
             "                      delta = delta_val/delta_time, "
             "                      prev_time = time, prev_val = val, delta)",
