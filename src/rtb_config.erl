@@ -421,19 +421,21 @@ prep_option(www_port, P) when is_integer(P), P>0, P<65536 ->
     {www_port, P};
 prep_option(www_domain, <<_, _/binary>> = D) ->
     {www_domain, binary_to_list(D)};
+prep_option(gnuplot, undefined) ->
+    Exec = case os:find_executable("gnuplot") of
+               false -> "gnuplot";
+               Path -> Path
+           end,
+    prep_option(gnuplot, iolist_to_binary(Exec));
 prep_option(gnuplot, Exec) ->
     Path = binary_to_list(Exec),
     case string:strip(os:cmd(Path ++ " --version"), right, $\n) of
-	"gnuplot " ++ _ = Version ->
-	    lager:info("Found ~s", [Version]),
+	"gnuplot " ++ Version ->
+	    lager:info("Found ~s ~s", [Path, Version]),
 	    {gnuplot, Path};
 	_ ->
-	    case os:cmd(Path ++ " --help") of
-		"Usage:" ++ _ -> {gnuplot, Path};
-		_ ->
-		    lager:critical("Gnuplot was not found", []),
-		    erlang:error(badarg)
-	    end
+            lager:critical("Gnuplot was not found", []),
+            erlang:error(badarg)
     end;
 prep_option(certfile, undefined) ->
     {certfile, undefined};
@@ -467,7 +469,7 @@ options() ->
      {www_dir, <<"www">>},
      {www_port, 8080},
      {www_domain, <<"localhost">>},
-     {gnuplot, <<"gnuplot">>},
+     {gnuplot, undefined},
      {debug, false},
      %% Required options
      scenario,
