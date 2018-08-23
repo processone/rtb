@@ -28,7 +28,7 @@ stress test all features defined in the
 # Status
 
 RTB is in an early stage of development with the following limitations:
-- MQTT support is limited to v3.1.1 only.
+- MQTT support is limited to versions 3.1.1 and 5.0
 - For XMPP protocol support for
   [Multi-User Chat](https://xmpp.org/extensions/xep-0045.html) and
   [Personal Eventing Protocol](https://xmpp.org/extensions/xep-0163.html)
@@ -227,7 +227,8 @@ servers:
 
 - **gnuplot**: `string()`
 
-  The path to a gnuplot execution binary. The default is `gnuplot`.
+  The path to a gnuplot execution binary. By default RTB is trying to detect
+  the location of gnuplot automatically.
 
 Example:
 ```yaml
@@ -463,6 +464,10 @@ password: pass%
 
 #### Parameters for session control
 
+- **protocol_version**: `string()`
+
+  MQTT protocol version. Can be `3.1.1` or `5.0`. The default is `3.1.1`.
+
 - **clean_session**: `true | false`
 
   Whether to set `CleanSession` flag or not. If the value is `true` then
@@ -477,6 +482,7 @@ password: pass%
 
 Example:
 ```yaml
+protocol_version: 5.0
 clean_session: true
 will:
   qos: 2
@@ -535,6 +541,13 @@ will:
       $SYS/#: 1
       /rtb/[1..10]: 0
    ```
+
+- **track_publish_delivery**: `true | false`
+
+  Check if PUBLISH packets reach at least a single destination client. The result
+  is displayed as `publish-loss` graph in the Web statistics interface.
+
+  **NOTE**: the option is only available for MQTT 5.0. See `protocol_version` option.
 
 #### Parameters for timings control
 

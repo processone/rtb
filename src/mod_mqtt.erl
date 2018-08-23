@@ -36,16 +36,18 @@
 -include("mod_mqtt.hrl").
 -include_lib("kernel/include/inet.hrl").
 
--record(state, {username         :: binary(),
+-record(state, {version          :: mqtt_version(),
+                username         :: binary(),
 		password         :: binary(),
-		timeout          :: integer(),
+		timeout          :: infinity | integer(),
+                keep_alive       :: seconds(),
 		client_id        :: binary(),
 		socket           :: undefined | {sockmod(), socket()},
 		codec            :: mod_mqtt_codec:state(),
-		waiting_pong     :: boolean(),
+		pingreq          :: undefined | pingreq(),
 		clean_session    :: boolean(),
 		id = 0           :: non_neg_integer(),
-		dup              :: undefined | dup_packet(),
+		in_flight        :: undefined | in_flight_packet(),
 		conn_id          :: integer(),
 		conn_opts        :: [gen_tcp:option()],
 		conn_addrs       :: [{server(), inet:port_number(), boolean()}],
@@ -64,16 +66,18 @@
 -type socket() :: inet:socket() | fast_tls:tls_socket().
 -type seconds() :: non_neg_integer().
 -type milli_seconds() :: non_neg_integer().
--type dup_packet() :: subscribe() | unsubscribe() | publish() | pubrel().
+-type in_flight_packet() :: subscribe() | unsubscribe() | publish() | pubrel().
 -type socket_error_reason() :: closed | timeout | inet:posix().
--type error_reason() :: {auth, connack_code()} |
+-type error_reason() :: {disconnected, reason_code(), binary()} |
+                        {auth, reason_code(), binary()} |
 			{socket, socket_error_reason()} |
 			{dns, inet:posix() | inet_res:res_error()} |
 			{codec, mod_mqtt_codec:error_reason()} |
 			{unexpected_packet, atom()} |
 			{tls, inet:posix() | atom() | binary()} |
 			internal_server_error | timeout | ping_timeout |
-			queue_full | disconnected | shutdown.
+			queue_full | disconnected | shutdown |
+                        subscribe_failure.
 
 -define(DNS_TIMEOUT, timer:seconds(5)).
 -define(TCP_SEND_TIMEOUT, timer:seconds(15)).
@@ -83,8 +87,11 @@
 %%%===================================================================
 load() ->
     case application:ensure_all_started(fast_tls) of
-	{ok, _} -> ok;
-	Err -> Err
+	{ok, _} ->
+            ets:new(rtb_tracker, [named_table, public]),
+            ok;
+	Err ->
+            Err
     end.
 
 start(I, Opts, Servers, JustStarted) ->
@@ -101,6 +108,9 @@ options() ->
      {publish, []},
      {subscribe, []},
      {clean_session, false},
+     {protocol_version, 4},
+     {track_publish_delivery, false},
+     %% Required options
      servers,
      client_id].
 
@@ -141,60 +151,55 @@ prep_option(Opt, Val) when Opt == reconnect_interval;
 			   Opt == publish_interval ->
     case rtb_config:to_bool(Val) of
 	false -> {Opt, false}
-    end.
+    end;
+prep_option(protocol_version, V) when V=:=4; V==5 ->
+    {protocol_version, trunc(V)};
+prep_option(protocol_version, V) ->
+    Parts = [binary_to_integer(Part)
+             || Part <- binary:split(V, <<".">>, [global])],
+    case Parts of
+        [3,1,1] -> {protocol_version, 4};
+        [5,0,0] -> {protocol_version, 5}
+    end;
+prep_option(track_publish_delivery, Val) ->
+    {track_publish_delivery,
+     case rtb_config:to_bool(Val) of
+         true ->
+             case rtb_config:get_option(protocol_version) of
+                 5 -> true;
+                 _ ->
+                     lager:critical("Option 'track_publish_delivery' is only "
+                                    "available for MQTT 5.0: you should've "
+                                    "set 'protocol_version: 5'"),
+                     erlang:error(badarg)
+             end;
+         false ->
+             false
+     end}.
 
 stats() ->
     [{'sessions', fun(_) -> rtb_sm:size() end},
-     {'session-errors', fun rtb_stats:lookup/1},
-     %% {'publish-diff',
-     %%  fun(_) ->
-     %% 	      rtb_stats:lookup('publish-out') - rtb_stats:lookup('publish-in')
-     %%  end},
+     {'connections', fun rtb_stats:lookup/1},
      {'publish-in', fun rtb_stats:lookup/1},
-     {'publish-out', fun rtb_stats:lookup/1}].
-
--spec format_error(error_reason()) -> string().
-format_error(disconnected) ->
-    "Connection closed by us";
-format_error(queue_full) ->
-    "Message queue is overloaded";
-format_error(internal_server_error) ->
-    "Internal server error";
-format_error(timeout) ->
-    "Connection timed out";
-format_error(ping_timeout) ->
-    "Ping timeout";
-format_error(shutdown) ->
-    "System shutting down";
-format_error({unexpected_packet, Name}) ->
-    format("Unexpected ~s packet", [string:to_upper(atom_to_list(Name))]);
-format_error({tls, Reason}) ->
-    format("TLS failed: ~s", [format_tls_error(Reason)]);
-format_error({dns, Reason}) ->
-    format("DNS lookup failed: ~s", [format_inet_error(Reason)]);
-format_error({socket, A}) ->
-    format("Connection failed: ~s", [format_inet_error(A)]);
-format_error({auth, Code}) ->
-    format("Authentication failed: ~s", [mod_mqtt_codec:format_error(Code)]);
-format_error({codec, CodecError}) ->
-    format("Protocol error: ~s", [mod_mqtt_codec:format_error(CodecError)]);
-format_error(A) when is_atom(A) ->
-    atom_to_list(A);
-format_error(Reason) ->
-    format("Unrecognized error: ~w", [Reason]).
+     {'publish-out', fun rtb_stats:lookup/1},
+     {'publish-loss', fun(_) -> ets:info(rtb_tracker, size) end},
+     {'errors', fun rtb_stats:lookup/1}].
 
 %%%===================================================================
 %%% gen_fsm callbacks
 %%%===================================================================
 init([I, Opts, Servers, JustStarted]) ->
     {User, ClientID, Password} = make_login(I, true),
-    Timeout = timer:seconds(rtb_config:get_option(keep_alive)),
+    KeepAlive = rtb_config:get_option(keep_alive),
+    Timeout = timer:seconds(KeepAlive),
     ReconnectAfter = case rtb_config:get_option(reconnect_interval) of
 			 false -> undefined;
 			 Secs -> {random_interval(Secs), 1}
 		     end,
     CleanSession = rtb_config:get_option(clean_session),
-    State = #state{username = User,
+    Version = rtb_config:get_option(protocol_version),
+    State = #state{version = Version,
+                   username = User,
 		   client_id = ClientID,
 		   password = Password,
 		   conn_id = I,
@@ -203,25 +208,30 @@ init([I, Opts, Servers, JustStarted]) ->
 		   reconnect_after = ReconnectAfter,
 		   clean_session = CleanSession,
 		   just_started = JustStarted,
+                   keep_alive = KeepAlive,
                    subscribed = false,
 		   id = p1_rand:uniform(65535),
 		   queue = p1_queue:new(ram, 100),
-		   codec = mod_mqtt_codec:new(infinity),
-		   timeout = current_time() + Timeout,
-		   waiting_pong = false},
+		   codec = mod_mqtt_codec:new(infinity, Version),
+		   timeout = current_time() + Timeout},
     p1_fsm:send_event(self(), connect),
     {ok, connecting, State, Timeout}.
 
 connecting(connect, State) ->
     case connect(State) of
 	{ok, State1} ->
-	    KeepAlive = rtb_config:get_option(keep_alive),
-	    Pkt = #connect{keep_alive = KeepAlive,
-			   will = make_publish(will, State1),
-			   clean_session = State#state.clean_session,
-			   client_id = State1#state.client_id,
-			   username = State1#state.username,
-			   password = State1#state.password},
+            rtb_stats:incr('connections'),
+            SessionExpiry = get_session_expiry(State1),
+	    Pkt = #connect{
+                     proto_level = State1#state.version,
+                     keep_alive = rtb_config:get_option(keep_alive),
+                     will = make_publish(will, State1),
+                     clean_session = State1#state.clean_session,
+                     client_id = State1#state.client_id,
+                     username = State1#state.username,
+                     password = State1#state.password,
+                     properties = #{session_expiry_interval => SessionExpiry,
+                                    request_response_information => true}},
 	    case send(connecting, State1, Pkt) of
 		{ok, State2} ->
 		    next_state(waiting_for_connack, State2);
@@ -247,16 +257,17 @@ waiting_for_connack(Event, State) ->
 waiting_for_connack(Event, From, State) ->
     handle_sync_event(Event, From, waiting_for_connack, State).
 
-session_established(timeout, #state{waiting_pong = true} = State) ->
-    stop(session_established, State, ping_timeout);
-session_established(timeout, State) ->
-    case send(session_established, State, #pingreq{}) of
+session_established(timeout, #state{pingreq = undefined} = State) ->
+    Ping = attach_timestamp(#pingreq{}),
+    case send(session_established, State, Ping) of
 	{ok, State1} ->
-	    State2 = State1#state{waiting_pong = true},
+	    State2 = State1#state{pingreq = Ping},
 	    next_state(session_established, State2);
 	{error, State1, Reason} ->
 	    stop(session_established, State1, Reason)
     end;
+session_established(timeout, State) ->
+    stop(session_established, State, ping_timeout);
 session_established(Event, State) ->
     handle_event(Event, session_established, State).
 
@@ -334,88 +345,153 @@ handle_info(Info, StateName, State) ->
 		  [Info, StateName, pp(State)]),
     next_state(StateName, State).
 
+handle_packet(#disconnect{} = Pkt, _StateName,
+              #state{version = ?MQTT_VERSION_5} = State) ->
+    Reason = maps:get(reason_string, Pkt#disconnect.properties, <<>>),
+    {error, State, {disconnected, Pkt#disconnect.code, Reason}};
 handle_packet(#connack{} = Pkt, waiting_for_connack, State) ->
     case Pkt#connack.code of
-	accepted ->
+	success ->
             CleanSession = rtb_config:get_option(clean_session),
-	    State1 = State#state{clean_session = CleanSession},
+            KeepAlive = maps:get(server_keep_alive, Pkt#connack.properties,
+                                 rtb_config:get_option(keep_alive)),
+	    State1 = State#state{clean_session = CleanSession,
+                                 keep_alive = KeepAlive},
             State2 = case Pkt#connack.session_present of
                          false ->
                              Q = p1_queue:clear(State1#state.queue),
                              State1#state{queue = Q,
                                           acks = #{},
                                           subscribed = false,
-                                          dup = undefined};
+                                          in_flight = undefined};
                          true ->
                              State1
                      end,
             subscribe(State2);
 	Code ->
-	    {error, State, {auth, Code}}
+            Reason = maps:get(reason_string, Pkt#connack.properties, <<>>),
+	    {error, State, {auth, Code, Reason}}
     end;
 handle_packet(Pkt, StateName, State) when StateName /= session_established ->
     handle_unexpected_packet(Pkt, StateName, State);
 handle_packet(#suback{id = ID, codes = Codes} = Pkt, StateName,
-	      #state{dup = #subscribe{id = ID} = Sub} = State) ->
-    case [QoS || {_, QoS} <- Sub#subscribe.topic_filters] of
+	      #state{in_flight = #subscribe{id = ID} = Sub} = State) ->
+    rtb_stats:incr({'subscribe-rtt', calc_rtt(Sub)}),
+    State1 = State#state{in_flight = undefined},
+    case [QoS || {_, #sub_opts{qos = QoS}} <- Sub#subscribe.filters] of
         Codes ->
-            State1 = case State#state.subscribed of
-                         true -> State;
-                         false -> register_session(State)
+            State2 = case State1#state.subscribed of
+                         true -> State1;
+                         false -> register_session(State1)
                      end,
-            resend(State1#state{dup = undefined, subscribed = true});
+            resend(State2#state{subscribed = true});
         _ ->
-            handle_unexpected_packet(Pkt, StateName, State)
+            handle_error_packet(Pkt, StateName, State1)
     end;
-handle_packet(#unsuback{id = ID}, _StateName,
-	      #state{dup = #unsubscribe{id = ID}} = State) ->
-    resend(State#state{dup = undefined});
-handle_packet(#puback{id = ID}, _StateName,
-	      #state{dup = #publish{id = ID, qos = 1}} = State) ->
-    resend(State#state{dup = undefined});
-handle_packet(#pubrec{id = ID}, StateName,
-	      #state{dup = #publish{id = ID, qos = 2}} = State) ->
-    send(StateName, State#state{dup = undefined}, #pubrel{id = ID});
-handle_packet(#pubrec{id = ID}, StateName,
-              #state{dup = #pubrel{id = ID}} = State) ->
-    lager:debug("Got duplicated PUBREC with id=~B, resending PUBREL", [ID]),
-    send(StateName, State#state{dup = undefined}, #pubrel{id = ID});
-handle_packet(#pubcomp{id = ID}, _StateName,
-              #state{dup = #pubrel{id = ID}} = State) ->
-    resend(State#state{dup = undefined});
-handle_packet(#pubcomp{id = ID}, _StateName, State) ->
-    lager:debug("Ignoring unexpected PUBCOMP with id=~B: most likely "
-                "it's a repeated response to duplicated PUBREL", [ID]),
-    {ok, State};
-handle_packet(#publish{qos = 0}, _StateName, State) ->
+handle_packet(#suback{} = Pkt, StateName, State) ->
+    handle_ignored_packet(Pkt, StateName, State);
+handle_packet(#unsuback{id = ID, codes = Codes} = Pkt, StateName,
+	      #state{in_flight = #unsubscribe{id = ID} = UnSub} = State) ->
+    rtb_stats:incr({'unsubscribe-rtt', calc_rtt(UnSub)}),
+    State1 = State#state{in_flight = undefined},
+    case lists:any(fun mod_mqtt_codec:is_error_code/1, Codes) of
+        true -> handle_error_packet(Pkt, StateName, State1);
+        false -> resend(State1)
+    end;
+handle_packet(#unsuback{} = Pkt, StateName, State) ->
+    handle_ignored_packet(Pkt, StateName, State);
+handle_packet(#puback{id = ID, code = Code} = Pkt, StateName,
+	      #state{in_flight = #publish{id = ID, qos = 1} = Pub} = State) ->
+    rtb_stats:incr({'publish-rtt', calc_rtt(Pub)}),
+    State1 = State#state{in_flight = undefined},
+    case mod_mqtt_codec:is_error_code(Code) of
+        true -> handle_error_packet(Pkt, StateName, State1);
+        false -> resend(State1)
+    end;
+handle_packet(#puback{} = Pkt, StateName, State) ->
+    handle_ignored_packet(Pkt, StateName, State);
+handle_packet(#pubrec{id = ID, code = Code} = Pkt, StateName,
+	      #state{in_flight = #publish{id = ID, qos = 2} = Pub} = State) ->
+    case mod_mqtt_codec:is_error_code(Code) of
+        true ->
+            rtb_stats:incr({'publish-rtt', calc_rtt(Pub)}),
+            State1 = State#state{in_flight = undefined},
+            handle_error_packet(Pkt, StateName, State1);
+        false ->
+            Pubrel = #pubrel{id = ID, meta = Pub#publish.meta},
+            State1 = State#state{in_flight = Pubrel},
+            send(StateName, State1, Pubrel)
+    end;
+handle_packet(#pubrec{id = ID}, StateName, State) ->
+    lager:warning("Got unexpected PUBREC with id=~B, "
+                  "sending PUBREL with error reason code", [ID]),
+    Pubrel = #pubrel{id = ID, code = 'packet-identifier-not-found'},
+    send(StateName, State, Pubrel);
+handle_packet(#pubcomp{id = ID, code = Code} = Pkt, StateName,
+              #state{in_flight = #pubrel{id = ID} = Pubrel} = State) ->
+    rtb_stats:incr({'publish-rtt', calc_rtt(Pubrel)}),
+    State1 = State#state{in_flight = undefined},
+    case mod_mqtt_codec:is_error_code(Code) of
+        true -> handle_error_packet(Pkt, StateName, State1);
+        false -> resend(State1)
+    end;
+handle_packet(#pubcomp{} = Pkt, StateName, State) ->
+    handle_ignored_packet(Pkt, StateName, State);
+handle_packet(#publish{qos = 0} = Pkt, _StateName, State) ->
     rtb_stats:incr('publish-in'),
+    stop_tracking(Pkt),
     {ok, State};
-handle_packet(#publish{qos = 1, id = ID}, StateName, State) ->
+handle_packet(#publish{qos = 1, id = ID} = Pkt, StateName, State) ->
     rtb_stats:incr('publish-in'),
+    stop_tracking(Pkt),
     send(StateName, State, #puback{id = ID});
-handle_packet(#publish{qos = 2, id = ID}, StateName, State) ->
+handle_packet(#publish{qos = 2, id = ID} = Pkt, StateName, State) ->
     State1 = case maps:is_key(ID, State#state.acks) of
 		 true -> State;
 		 false ->
 		     rtb_stats:incr('publish-in'),
+                     stop_tracking(Pkt),
 		     Acks = maps:put(ID, true, State#state.acks),
 		     State#state{acks = Acks}
 	     end,
     send(StateName, State1, #pubrec{id = ID});
 handle_packet(#pubrel{id = ID}, StateName, State) ->
-    Acks = maps:remove(ID, State#state.acks),
-    State1 = State#state{acks = Acks},
-    send(StateName, State1, #pubcomp{id = ID});
-handle_packet(#pingresp{}, _StateName, State) ->
-    {ok, State#state{waiting_pong = false}};
+    case maps:take(ID, State#state.acks) of
+        {_, Acks} ->
+            State1 = State#state{acks = Acks},
+            send(StateName, State1, #pubcomp{id = ID});
+        error ->
+            lager:warning("Got unexpected PUBREL with id=~B, "
+                          "sending PUBCOMP with error reason code", [ID]),
+            Pubcomp = #pubcomp{id = ID, code = 'packet-identifier-not-found'},
+            send(StateName, State, Pubcomp)
+    end;
+handle_packet(#pingresp{}, _StateName,
+              #state{pingreq = #pingreq{} = Ping} = State) ->
+    rtb_stats:incr({'ping-rtt', calc_rtt(Ping)}),
+    {ok, State#state{pingreq = undefined}};
 handle_packet(Pkt, StateName, State) ->
     handle_unexpected_packet(Pkt, StateName, State).
 
 handle_unexpected_packet(Pkt, StateName, State) ->
     lager:warning("Unexpected packet:~n~s~n** in state ~s:~n~s",
 		  [pp(Pkt), StateName, pp(State)]),
-    %% Should we set clean_session=true here?
     {error, State, {unexpected_packet, element(1, Pkt)}}.
+
+handle_error_packet(Pkt, StateName, State) ->
+    lager:warning("Got packet with error code(s):~n~s~n** in state ~s:~n~s",
+		  [pp(Pkt), StateName, pp(State)]),
+    case Pkt of
+        #suback{} ->
+            {error, State, subscribe_failure};
+        _ ->
+            {ok, State}
+    end.
+
+handle_ignored_packet(Pkt, StateName, State) ->
+    lager:warning("Ignoring unexpected packet:~n~s~n** in state ~s:~n~s",
+                  [pp(Pkt), StateName, pp(State)]),
+    {ok, State}.
 
 terminate(Reason, _StateName, State) ->
     rtb_sm:unregister(State#state.conn_id),
@@ -424,6 +500,7 @@ terminate(Reason, _StateName, State) ->
 	      normal -> State#state.stop_reason;
 	      _ -> internal_server_error
 	  end,
+    close_socket(State#state.socket, Why),
     lager:debug("Connection #~B closed: ~s",
                 [State#state.conn_id, format_error(Why)]).
 
@@ -448,35 +525,34 @@ publish(StateName, State) ->
 %%%===================================================================
 %%% Internal functions: misc
 %%%===================================================================
+next_state(StateName, #state{timeout = infinity} = State) ->
+    {next_state, StateName, State, infinity};
 next_state(StateName, #state{timeout = Time} = State) ->
     Timeout = max(0, Time - current_time()),
     {next_state, StateName, State, Timeout}.
 
-stop(StateName, #state{just_started = true}, Reason)
-  when StateName /= session_established ->
+stop(_StateName, #state{just_started = true}, Reason) ->
     rtb:halt("~s", [format_error(Reason)]);
 stop(StateName, #state{reconnect_after = undefined} = State, Reason) ->
     unregister_session(StateName, State, Reason),
-    State1 = send(State, #disconnect{}),
-    {stop, normal, State1#state{stop_reason = Reason}};
+    {stop, normal, State#state{stop_reason = Reason}};
 stop(disconnected, State, _Reason) ->
     next_state(disconnected, State);
 stop(StateName, State, Reason) ->
     lager:debug("Session #~B closed: ~s",
 		[State#state.conn_id, format_error(Reason)]),
     unregister_session(StateName, State, Reason),
-    close_socket(State#state.socket),
-    {Timeout, Factor} = State#state.reconnect_after,
-    rtb:cancel_timer(State#state.disconnect_timer),
-    State1 = State#state{socket = undefined,
-			 disconnect_timer = undefined,
-			 conn_addrs = rtb:random_server(),
-			 waiting_pong = false,
-			 stop_reason = Reason,
-			 codec = mod_mqtt_codec:renew(State#state.codec),
-			 reconnect_after = {Timeout, Factor*2}},
-    State2 = set_timeout(State1, Timeout*Factor),
-    next_state(disconnected, State2).
+    State1 = close_socket(State, Reason),
+    {Timeout, Factor} = State1#state.reconnect_after,
+    rtb:cancel_timer(State1#state.disconnect_timer),
+    State2 = State1#state{disconnect_timer = undefined,
+                          conn_addrs = rtb:random_server(),
+                          pingreq = undefined,
+                          stop_reason = Reason,
+                          codec = mod_mqtt_codec:renew(State1#state.codec),
+                          reconnect_after = {Timeout, Factor*2}},
+    State3 = set_timeout(State2, Timeout*Factor),
+    next_state(disconnected, State3).
 
 register_session(State) ->
     ReconnectAfter = case State#state.reconnect_after of
@@ -495,8 +571,8 @@ unregister_session(StateName, _State, Reason) ->
 	disconnected ->
 	    ok;
 	_ ->
-	    rtb_stats:incr('session-errors'),
-	    rtb_stats:incr({'session-error-reason', {Reason, StateName}})
+	    rtb_stats:incr('errors'),
+	    rtb_stats:incr({'error-reason', {Reason, StateName}})
     end.
 
 subscribe(#state{subscribed = true} = State) ->
@@ -508,7 +584,7 @@ subscribe(State) ->
             State1 = register_session(State#state{subscribed = true}),
             resend(State1);
         Pkt ->
-            case State#state.dup of
+            case State#state.in_flight of
                 #subscribe{} ->
                     resend(State);
                 undefined ->
@@ -522,14 +598,14 @@ send(StateName, State, Pkt) when is_record(Pkt, subscribe) orelse
     ID = next_id(State#state.id),
     Pkt1 = set_id(Pkt, ID),
     case StateName == session_established andalso
-	 State#state.dup == undefined andalso
+	 State#state.in_flight == undefined andalso
 	 p1_queue:is_empty(State#state.queue) of
 	true ->
-	    Dup = case Pkt1 of
-		      #publish{qos = 0} -> undefined;
-		      _ -> Pkt1
-		  end,
-	    State1 = State#state{id = ID, dup = Dup},
+	    InFlight = case Pkt1 of
+                           #publish{qos = 0} -> undefined;
+                           _ -> attach_timestamp(Pkt1)
+                       end,
+	    State1 = State#state{id = ID, in_flight = InFlight},
 	    {ok, send(State1, Pkt1)};
 	false ->
 	    try p1_queue:in(Pkt1, State#state.queue) of
@@ -542,39 +618,57 @@ send(StateName, State, Pkt) when is_record(Pkt, subscribe) orelse
 		    {error, State1, queue_full}
 	    end
     end;
-send(_StateName, State, #pubrel{} = Pkt) ->
-    {ok, send(State#state{dup = Pkt}, Pkt)};
 send(_StateName, State, Pkt) ->
     {ok, send(State, Pkt)}.
 
-resend(#state{dup = undefined} = State) ->
+resend(#state{in_flight = undefined} = State) ->
     case p1_queue:out(State#state.queue) of
 	{{value, #publish{qos = 0} = Pkt}, Q} ->
 	    State1 = send(State#state{queue = Q}, Pkt),
 	    resend(State1);
 	{{value, Pkt}, Q} ->
-	    State1 = State#state{dup = Pkt, queue = Q},
+            InFlight = attach_timestamp(Pkt),
+	    State1 = State#state{in_flight = InFlight, queue = Q},
 	    {ok, send(State1, Pkt)};
 	{empty, _} ->
 	    {ok, State}
     end;
-resend(#state{dup = Pkt} = State) ->
+resend(#state{in_flight = Pkt} = State) ->
     {ok, send(State, set_dup_flag(Pkt))}.
 
 send(#state{socket = {SockMod, Sock} = Socket} = State, Pkt) ->
-    lager:debug("Send MQTT packet:~n~s", [pp(Pkt)]),
-    case Pkt of
-	#publish{dup = false} ->
-	    rtb_stats:incr('publish-out');
-	_ ->
-	    ok
-    end,
-    Data = mod_mqtt_codec:encode(Pkt),
+    Pkt1 = case Pkt of
+               #publish{dup = false} ->
+                   rtb_stats:incr('publish-out'),
+                   start_tracking(Pkt);
+               _ ->
+                   Pkt
+           end,
+    lager:debug("Send MQTT packet:~n~s", [pp(Pkt1)]),
+    Data = mod_mqtt_codec:encode(State#state.version, Pkt1),
     Res = SockMod:send(Sock, Data),
     check_sock_result(Socket, Res),
     reset_keep_alive(State);
 send(State, _) ->
     State.
+
+-spec start_tracking(publish()) -> publish().
+start_tracking(Pkt) ->
+    case rtb_config:get_option(track_publish_delivery) of
+        false -> Pkt;
+        true ->
+            ID = p1_time_compat:unique_integer([positive]),
+            Props = #{user_property => [{<<"id">>, integer_to_binary(ID)}]},
+            ets:insert(rtb_tracker, {ID, Pkt#publish.topic}),
+            Pkt#publish{properties = Props}
+    end.
+
+-spec stop_tracking(publish()) -> boolean().
+stop_tracking(#publish{properties = #{user_property := Props}}) ->
+    ID = binary_to_integer(proplists:get_value(<<"id">>, Props)),
+    ets:delete(rtb_tracker, ID);
+stop_tracking(_) ->
+    false.
 
 activate(#state{socket = {SockMod, Sock} = Socket}) ->
     Res = case SockMod of
@@ -585,11 +679,31 @@ activate(#state{socket = {SockMod, Sock} = Socket}) ->
 activate(_State) ->
     ok.
 
--spec close_socket(undefined | socket()) -> ok | {error, error_reason()}.
-close_socket({SockMod, Sock}) ->
-    SockMod:close(Sock);
-close_socket(undefined) ->
-    ok.
+-spec close_socket(state(), error_reason()) -> state().
+close_socket(#state{socket = {SockMod, Sock}} = State, Err) ->
+    rtb_stats:decr('connections'),
+    State1 = case Err of
+                 {Tag, _} when Tag == socket; Tag == dns; Tag == tls ->
+                     State;
+                 {Tag, _, _} when Tag == auth; Tag == disconnected ->
+                     State;
+                 _ ->
+                     Code = disconnect_reason_code(Err),
+                     Reason = format_error(Err),
+                     Props = #{reason_string => list_to_binary(Reason)},
+                     Props1 = case Err of
+                                  shutdown ->
+                                      Props#{session_expiry_interval => 0};
+                                  _ ->
+                                      Props
+                              end,
+                     Pkt = #disconnect{code = Code, properties = Props1},
+                     send(State, Pkt)
+             end,
+    SockMod:close(Sock),
+    State1#state{socket = undefined};
+close_socket(State, _) ->
+    State.
 
 -spec check_sock_result(socket(), ok | {error, inet:posix()}) -> ok.
 check_sock_result(_, ok) ->
@@ -638,7 +752,7 @@ make_publish(Opt, State) ->
 		       ({Pos, Val}, Pkt) ->
 			    setelement(Pos, Pkt, Val)
 		    end, #publish{payload = <<>>}, Args),
-	    Pkt#publish{topic = T1}
+            Pkt#publish{topic = T1}
     end.
 
 -spec make_subscribe(state()) -> undefined | subscribe().
@@ -646,16 +760,21 @@ make_subscribe(State) ->
     case rtb_config:get_option(subscribe) of
 	[_|_] = TFs ->
 	    I = State#state.conn_id,
-	    TFs1 = [{rtb:replace(TF, I), QoS} || {TF, QoS} <- TFs],
-	    #subscribe{topic_filters = TFs1};
+	    TFs1 = [{rtb:replace(TF, I), #sub_opts{qos = QoS}}
+                    || {TF, QoS} <- TFs],
+	    #subscribe{filters = TFs1};
 	[] ->
 	    undefined
     end.
 
-reset_keep_alive(State) ->
-    Timeout = timer:seconds(rtb_config:get_option(keep_alive)),
-    set_timeout(State, Timeout).
+reset_keep_alive(#state{keep_alive = KeepAlive} = State) ->
+    case KeepAlive of
+        0 -> set_timeout(State, infinity);
+        _ -> set_timeout(State, timer:seconds(KeepAlive))
+    end.
 
+set_timeout(State, infinity) ->
+    State#state{timeout = infinity};
 set_timeout(State, Timeout) ->
     State#state{timeout = current_time() + Timeout}.
 
@@ -674,11 +793,42 @@ set_id(Pkt, ID) ->
 	_ -> Pkt
     end.
 
--spec set_dup_flag(mqtt_packet()) -> mqtt_packet().
+-spec set_dup_flag(in_flight_packet()) -> in_flight_packet().
 set_dup_flag(#publish{} = Pkt) ->
     Pkt#publish{dup = true};
 set_dup_flag(Pkt) ->
     Pkt.
+
+-spec attach_timestamp(mqtt_packet()) -> mqtt_packet().
+attach_timestamp(Pkt) ->
+    Pos = case Pkt of
+              #publish{} -> #publish.meta;
+              #subscribe{} -> #subscribe.meta;
+              #unsubscribe{} -> #unsubscribe.meta;
+              #pingreq{} -> #pingreq.meta
+          end,
+    Meta = element(Pos, Pkt),
+    Meta1 = maps:put(timestamp, current_time(), Meta),
+    setelement(Pos, Pkt, Meta1).
+
+-spec calc_rtt(mqtt_packet()) -> mqtt_packet().
+calc_rtt(Pkt) ->
+    Meta = case Pkt of
+               #publish{meta = M} -> M;
+               #pubrel{meta = M} -> M;
+               #subscribe{meta = M} -> M;
+               #unsubscribe{meta = M} -> M;
+               #pingreq{meta = M} -> M
+           end,
+    current_time() - maps:get(timestamp, Meta).
+
+-spec get_session_expiry(state()) -> seconds().
+get_session_expiry(State) ->
+    case rtb_config:get_option(reconnect_interval) of
+        false -> 0;
+        _ when State#state.clean_session -> 0;
+        Secs -> Secs*2
+    end.
 
 -spec random_interval(seconds()) -> milli_seconds().
 random_interval(0) ->
@@ -777,6 +927,57 @@ format_tls_error(Reason) ->
 -spec format(io:format(), list()) -> string().
 format(Fmt, Args) ->
     lists:flatten(io_lib:format(Fmt, Args)).
+
+-spec format_error(error_reason()) -> string().
+format_error(disconnected) ->
+    "Scheduled disconnection";
+format_error(queue_full) ->
+    "Message queue is overloaded";
+format_error(internal_server_error) ->
+    "Internal server error";
+format_error(timeout) ->
+    "Connection timed out";
+format_error(ping_timeout) ->
+    "Ping timeout";
+format_error(shutdown) ->
+    "Benchmark shutting down";
+format_error(subscribe_failure) ->
+    "SUBSCRIBE request has failed";
+format_error({unexpected_packet, Name}) ->
+    format("Unexpected ~s packet", [string:to_upper(atom_to_list(Name))]);
+format_error({tls, Reason}) ->
+    format("TLS failed: ~s", [format_tls_error(Reason)]);
+format_error({dns, Reason}) ->
+    format("DNS lookup failed: ~s", [format_inet_error(Reason)]);
+format_error({socket, A}) ->
+    format("Connection failed: ~s", [format_inet_error(A)]);
+format_error({auth, Code, <<>>}) ->
+    format("Authentication failure: ~s",
+           [mod_mqtt_codec:format_reason_code(Code)]);
+format_error({auth, Code, Reason}) ->
+    format("Authentication failure: ~s (~s)", [Reason, Code]);
+format_error({disconnected, Code, <<>>}) ->
+    format("Disconnected by peer: ~s",
+           [mod_mqtt_codec:format_reason_code(Code)]);
+format_error({disconnected, Code, Reason}) ->
+    format("Disconnected by peer: ~s (~s)", [Reason, Code]);
+format_error({codec, CodecError}) ->
+    mod_mqtt_codec:format_error(CodecError);
+format_error(A) when is_atom(A) ->
+    atom_to_list(A);
+format_error(Reason) ->
+    format("Unrecognized error: ~w", [Reason]).
+
+-spec disconnect_reason_code(error_reason()) -> reason_code().
+disconnect_reason_code(disconnected) -> 'normal-disconnection';
+disconnect_reason_code(queue_full) -> 'quota-exceeded';
+disconnect_reason_code(internal_server_error) -> 'implementation-specific-error';
+disconnect_reason_code(timeout) -> 'maximum-connect-time';
+disconnect_reason_code(ping_timeout) -> 'keep-alive-timeout';
+disconnect_reason_code(shutdown) -> 'server-shutting-down';
+disconnect_reason_code({unexpected_packet, _}) -> 'protocol-error';
+disconnect_reason_code({codec, Err}) -> mod_mqtt_codec:error_reason_code(Err);
+disconnect_reason_code(_) -> 'unspecified-error'.
 
 %%%===================================================================
 %%% Connecting stuff
