@@ -54,6 +54,7 @@
 		stop_reason      :: undefined | error_reason(),
 		just_started     :: boolean(),
                 subscribed       :: boolean(),
+                sub_id_avail     :: boolean(),
 		reconnect_after  :: undefined | {integer(), integer()},
 		disconnect_timer :: undefined | reference(),
 		publish_timer    :: undefined | reference(),
@@ -357,7 +358,11 @@ handle_packet(#connack{} = Pkt, waiting_for_connack, State) ->
             CleanSession = rtb_config:get_option(clean_session),
             KeepAlive = maps:get(server_keep_alive, Pkt#connack.properties,
                                  rtb_config:get_option(keep_alive)),
+            SubIDAvail = maps:get(subscription_identifiers_available,
+                                  Pkt#connack.properties,
+                                  State#state.version == ?MQTT_VERSION_5),
 	    State1 = State#state{clean_session = CleanSession,
+                                 sub_id_avail = SubIDAvail,
                                  keep_alive = KeepAlive},
             State2 = case Pkt#connack.session_present of
                          false ->
@@ -769,7 +774,11 @@ make_subscribe(State) ->
 	    I = State#state.conn_id,
 	    TFs1 = [{rtb:replace(TF, I), #sub_opts{qos = QoS}}
                     || {TF, QoS} <- TFs],
-	    #subscribe{filters = TFs1};
+            Props = case State#state.sub_id_avail of
+                        true -> #{subscription_identifier => I};
+                        false -> #{}
+                    end,
+	    #subscribe{filters = TFs1, properties = Props};
 	[] ->
 	    undefined
     end.
