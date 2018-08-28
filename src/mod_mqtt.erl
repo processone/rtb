@@ -185,6 +185,7 @@ stats() ->
      {'connections', fun rtb_stats:lookup/1},
      {'publish-in', fun rtb_stats:lookup/1},
      {'publish-out', fun rtb_stats:lookup/1},
+     {'queued', fun rtb_stats:lookup/1},
      {'publish-loss', fun(_) -> ets:info(rtb_tracker, size) end},
      {'errors', fun rtb_stats:lookup/1}].
 
@@ -366,6 +367,8 @@ handle_packet(#connack{} = Pkt, waiting_for_connack, State) ->
                                  keep_alive = KeepAlive},
             State2 = case Pkt#connack.session_present of
                          false ->
+                             rtb_stats:decr(
+                               'queued', p1_queue:len(State1#state.queue)),
                              Q = p1_queue:clear(State1#state.queue),
                              State1#state{queue = Q,
                                           acks = #{},
@@ -622,9 +625,12 @@ send(StateName, State, Pkt) when is_record(Pkt, subscribe) orelse
 	false ->
 	    try p1_queue:in(Pkt1, State#state.queue) of
 		Q ->
+                    rtb_stats:incr('queued'),
 		    State1 = State#state{id = ID, queue = Q},
 		    {ok, State1}
 	    catch error:full ->
+                    rtb_stats:decr(
+                      'queued', p1_queue:len(State#state.queue)),
 		    Q = p1_queue:clear(State#state.queue),
 		    State1 = State#state{queue = Q},
 		    {error, State1, queue_full}
@@ -636,9 +642,11 @@ send(_StateName, State, Pkt) ->
 resend(#state{in_flight = undefined} = State) ->
     case p1_queue:out(State#state.queue) of
 	{{value, #publish{qos = 0} = Pkt}, Q} ->
+            rtb_stats:decr('queued'),
 	    State1 = send(State#state{queue = Q}, Pkt),
 	    resend(State1);
 	{{value, Pkt}, Q} ->
+            rtb_stats:decr('queued'),
             InFlight = attach_timestamp(Pkt),
 	    State1 = State#state{in_flight = InFlight, queue = Q},
 	    {ok, send(State1, Pkt)};

@@ -20,7 +20,8 @@
 -behaviour(p1_server).
 
 %% API
--export([start_link/0, incr/1, decr/1, set/2, del/1, lookup/1, hist/1]).
+-export([start_link/0, incr/1, incr/2, decr/1, decr/2,
+         set/2, del/1, lookup/1, hist/1]).
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
@@ -39,10 +40,16 @@ start_link() ->
     p1_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 incr(Counter) ->
-    ets:update_counter(?MODULE, Counter, 1, {Counter, 0}).
+    incr(Counter, 1).
+
+incr(Counter, Incr) ->
+    ets:update_counter(?MODULE, Counter, Incr, {Counter, 0}).
 
 decr(Counter) ->
-    ets:update_counter(?MODULE, Counter, -1, {Counter, 0}).
+    decr(Counter, 1).
+
+decr(Counter, Decr) ->
+    ets:update_counter(?MODULE, Counter, -Decr, {Counter, 0}).
 
 set(Key, Val) ->
     ets:insert(?MODULE, {Key, Val}).
