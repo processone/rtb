@@ -33,7 +33,7 @@
 %% Scheduled actions
 -export([disconnect/2, publish/2]).
 
--include("mod_mqtt.hrl").
+-include("mqtt.hrl").
 -include_lib("kernel/include/inet.hrl").
 
 -record(state, {version          :: mqtt_version(),
@@ -43,7 +43,7 @@
                 keep_alive       :: seconds(),
 		client_id        :: binary(),
 		socket           :: undefined | {sockmod(), socket()},
-		codec            :: mod_mqtt_codec:state(),
+		codec            :: mqtt_codec:state(),
 		pingreq          :: undefined | pingreq(),
 		clean_session    :: boolean(),
 		id = 0           :: non_neg_integer(),
@@ -74,7 +74,7 @@
                         {auth, reason_code(), binary()} |
 			{socket, socket_error_reason()} |
 			{dns, inet:posix() | inet_res:res_error()} |
-			{codec, mod_mqtt_codec:error_reason()} |
+			{codec, mqtt_codec:error_reason()} |
 			{unexpected_packet, atom()} |
 			{tls, inet:posix() | atom() | binary()} |
 			internal_server_error | timeout | ping_timeout |
@@ -134,8 +134,8 @@ prep_option(subscribe, L) ->
     {subscribe,
      lists:map(
        fun({TF, QoS}) ->
-	       try {rtb:make_pattern(mod_mqtt_codec:topic_filter(TF)),
-		    mod_mqtt_codec:qos(QoS)}
+	       try {rtb:make_pattern(mqtt_codec:topic_filter(TF)),
+		    mqtt_codec:qos(QoS)}
 	       catch _:{_, bad_qos} ->
 		       rtb_config:fail_bad_val("QoS", QoS);
 		     _:_ ->
@@ -214,7 +214,7 @@ init([I, Opts, Servers, JustStarted]) ->
                    subscribed = false,
 		   id = p1_rand:uniform(65535),
 		   queue = p1_queue:new(ram, 100),
-		   codec = mod_mqtt_codec:new(infinity, Version),
+		   codec = mqtt_codec:new(infinity, Version),
 		   timeout = current_time() + Timeout},
     p1_fsm:send_event(self(), connect),
     {ok, connecting, State, Timeout}.
@@ -299,7 +299,7 @@ handle_info({tcp, TCPSock, TCPData}, StateName,
 	    #state{codec = Codec, socket = {_, _} = Socket} = State) ->
     case recv_data(Socket, TCPData) of
 	{ok, Data} ->
-	    case mod_mqtt_codec:decode(Codec, Data) of
+	    case mqtt_codec:decode(Codec, Data) of
 		{ok, Pkt, Codec1} ->
 		    lager:debug("Got MQTT packet:~n~s", [pp(Pkt)]),
 		    State1 = State#state{codec = Codec1},
@@ -396,7 +396,7 @@ handle_packet(#suback{} = Pkt, StateName, State) ->
 handle_packet(#unsuback{id = ID, codes = Codes} = Pkt, StateName,
 	      #state{in_flight = #unsubscribe{id = ID} = UnSub} = State) ->
     rtb_stats:incr({'unsubscribe-rtt', calc_rtt(UnSub)}),
-    case lists:any(fun mod_mqtt_codec:is_error_code/1, Codes) of
+    case lists:any(fun mqtt_codec:is_error_code/1, Codes) of
         true -> log_error_packet(Pkt, StateName, State);
         false -> ok
     end,
@@ -406,7 +406,7 @@ handle_packet(#unsuback{} = Pkt, StateName, State) ->
 handle_packet(#puback{id = ID, code = Code} = Pkt, StateName,
 	      #state{in_flight = #publish{id = ID, qos = 1} = Pub} = State) ->
     rtb_stats:incr({'publish-rtt', calc_rtt(Pub)}),
-    case mod_mqtt_codec:is_error_code(Code) of
+    case mqtt_codec:is_error_code(Code) of
         true -> log_error_packet(Pkt, StateName, State);
         false -> ok
     end,
@@ -415,7 +415,7 @@ handle_packet(#puback{} = Pkt, StateName, State) ->
     handle_ignored_packet(Pkt, StateName, State);
 handle_packet(#pubrec{id = ID, code = Code} = Pkt, StateName,
 	      #state{in_flight = #publish{id = ID, qos = 2} = Pub} = State) ->
-    case mod_mqtt_codec:is_error_code(Code) of
+    case mqtt_codec:is_error_code(Code) of
         true ->
             rtb_stats:incr({'publish-rtt', calc_rtt(Pub)}),
             log_error_packet(Pkt, StateName, State),
@@ -426,7 +426,7 @@ handle_packet(#pubrec{id = ID, code = Code} = Pkt, StateName,
             send(StateName, State1, Pubrel)
     end;
 handle_packet(#pubrec{id = ID, code = Code}, StateName, State) ->
-    case mod_mqtt_codec:is_error_code(Code) of
+    case mqtt_codec:is_error_code(Code) of
         false ->
             Code1 = 'packet-identifier-not-found',
             lager:warning("Got unexpected PUBREC with id=~B, "
@@ -441,7 +441,7 @@ handle_packet(#pubrec{id = ID, code = Code}, StateName, State) ->
 handle_packet(#pubcomp{id = ID, code = Code} = Pkt, StateName,
               #state{in_flight = #pubrel{id = ID} = Pubrel} = State) ->
     rtb_stats:incr({'publish-rtt', calc_rtt(Pubrel)}),
-    case mod_mqtt_codec:is_error_code(Code) of
+    case mqtt_codec:is_error_code(Code) of
         true -> log_error_packet(Pkt, StateName, State);
         false -> ok
     end,
@@ -551,7 +551,7 @@ stop(StateName, State, Reason) ->
                           conn_addrs = rtb:random_server(),
                           pingreq = undefined,
                           stop_reason = Reason,
-                          codec = mod_mqtt_codec:renew(State1#state.codec),
+                          codec = mqtt_codec:renew(State1#state.codec),
                           reconnect_after = {Timeout, Factor*2}},
     State3 = set_timeout(State2, Timeout*Factor),
     next_state(disconnected, State3).
@@ -652,7 +652,7 @@ send(#state{socket = {SockMod, Sock} = Socket} = State, Pkt) ->
                    Pkt
            end,
     lager:debug("Send MQTT packet:~n~s", [pp(Pkt1)]),
-    Data = mod_mqtt_codec:encode(State#state.version, Pkt1),
+    Data = mqtt_codec:encode(State#state.version, Pkt1),
     Res = SockMod:send(Sock, Data),
     check_sock_result(Socket, Res),
     reset_keep_alive(State);
@@ -854,7 +854,7 @@ prep_publish_opt({K, V}) ->
 	    end;
 	topic when is_binary(V) ->
 	    try {#publish.topic,
-                 rtb:make_pattern(mod_mqtt_codec:topic(V))}
+                 rtb:make_pattern(mqtt_codec:topic(V))}
 	    catch _:_ -> rtb_config:fail_opt_val(topic, V)
 	    end;
 	message when is_integer(V), V>= 0 ->
@@ -910,7 +910,7 @@ pp(state, N) ->
 	_ -> no
     end;
 pp(Rec, Size) ->
-    mod_mqtt_codec:pp(Rec, Size).
+    mqtt_codec:pp(Rec, Size).
 
 -spec format_inet_error(socket_error_reason()) -> string().
 format_inet_error(closed) ->
@@ -960,16 +960,16 @@ format_error({socket, A}) ->
     format("Connection failed: ~s", [format_inet_error(A)]);
 format_error({auth, Code, <<>>}) ->
     format("Authentication failure: ~s",
-           [mod_mqtt_codec:format_reason_code(Code)]);
+           [mqtt_codec:format_reason_code(Code)]);
 format_error({auth, Code, Reason}) ->
     format("Authentication failure: ~s (~s)", [Reason, Code]);
 format_error({disconnected, Code, <<>>}) ->
     format("Disconnected by peer: ~s",
-           [mod_mqtt_codec:format_reason_code(Code)]);
+           [mqtt_codec:format_reason_code(Code)]);
 format_error({disconnected, Code, Reason}) ->
     format("Disconnected by peer: ~s (~s)", [Reason, Code]);
 format_error({codec, CodecError}) ->
-    mod_mqtt_codec:format_error(CodecError);
+    mqtt_codec:format_error(CodecError);
 format_error(A) when is_atom(A) ->
     atom_to_list(A);
 format_error(Reason) ->
@@ -983,7 +983,7 @@ disconnect_reason_code(timeout) -> 'maximum-connect-time';
 disconnect_reason_code(ping_timeout) -> 'keep-alive-timeout';
 disconnect_reason_code(shutdown) -> 'server-shutting-down';
 disconnect_reason_code({unexpected_packet, _}) -> 'protocol-error';
-disconnect_reason_code({codec, Err}) -> mod_mqtt_codec:error_reason_code(Err);
+disconnect_reason_code({codec, Err}) -> mqtt_codec:error_reason_code(Err);
 disconnect_reason_code(_) -> 'unspecified-error'.
 
 %%%===================================================================

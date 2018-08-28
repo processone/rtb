@@ -15,7 +15,7 @@
 %%% limitations under the License.
 %%%
 %%%-------------------------------------------------------------------
--module(mod_mqtt_codec).
+-module(mqtt_codec).
 
 %% API
 -export([new/1, new/2, renew/1, decode/2, encode/2]).
@@ -25,7 +25,7 @@
 -export([topic/1, topic_filter/1, qos/1, utf8/1]).
 -export([decode_varint/1]).
 
--include("mod_mqtt.hrl").
+-include("mqtt.hrl").
 
 -define(MAX_UINT16, 65535).
 -define(MAX_UINT32, 4294967295).
