@@ -20,7 +20,7 @@
 
 -record(connect, {proto_level             = 4     :: non_neg_integer(),
 		  will                            :: undefined | publish(),
-		  clean_session           = true  :: boolean(),
+		  clean_start             = true  :: boolean(),
 		  keep_alive              = 0     :: non_neg_integer(),
 		  client_id               = <<>>  :: binary(),
 		  username                = <<>>  :: binary(),
@@ -74,6 +74,9 @@
 
 -record(disconnect, {code = 'normal-disconnection' :: reason_code(),
                      properties = #{} :: properties()}).
+
+-record(auth, {code = success :: reason_code(),
+               properties = #{} :: properties()}).
 
 -record(sub_opts, {qos = 0 :: qos(),
                    no_local = false :: boolean(),
@@ -171,9 +174,10 @@
 -type pingreq() :: #pingreq{}.
 -type pingresp() :: #pingresp{}.
 -type disconnect() :: #disconnect{}.
+-type auth() :: #auth{}.
 
 -type mqtt_packet() :: connect() | connack() | publish() | puback() |
 		       pubrel() | pubrec() | pubcomp() | subscribe() |
 		       suback() | unsubscribe() | unsuback() | pingreq() |
-		       pingresp() | disconnect().
+		       pingresp() | disconnect() | auth().
 -type mqtt_version() :: ?MQTT_VERSION_4 | ?MQTT_VERSION_5.

@@ -61,6 +61,8 @@
 		queue            :: p1_queue:queue()}).
 
 -type state() :: #state{}.
+-type state_name() :: connecting | waiting_for_connack |
+                      session_established | disconnected.
 -type server() :: inet:hostname() | inet:ip_address().
 -type sockmod() :: gen_tcp | fast_tls.
 -type socket() :: inet:socket() | fast_tls:tls_socket().
@@ -226,7 +228,7 @@ connecting(connect, State) ->
                      proto_level = State1#state.version,
                      keep_alive = rtb_config:get_option(keep_alive),
                      will = make_publish(will, State1),
-                     clean_session = State1#state.clean_session,
+                     clean_start = State1#state.clean_session,
                      client_id = State1#state.client_id,
                      username = State1#state.username,
                      password = State1#state.password,
@@ -377,37 +379,38 @@ handle_packet(Pkt, StateName, State) when StateName /= session_established ->
 handle_packet(#suback{id = ID, codes = Codes} = Pkt, StateName,
 	      #state{in_flight = #subscribe{id = ID} = Sub} = State) ->
     rtb_stats:incr({'subscribe-rtt', calc_rtt(Sub)}),
-    State1 = State#state{in_flight = undefined},
     case [QoS || {_, #sub_opts{qos = QoS}} <- Sub#subscribe.filters] of
         Codes ->
+            State1 = State#state{in_flight = undefined},
             State2 = case State1#state.subscribed of
                          true -> State1;
                          false -> register_session(State1)
                      end,
             resend(State2#state{subscribed = true});
         _ ->
-            handle_error_packet(Pkt, StateName, State1)
+            log_error_packet(Pkt, StateName, State),
+            {error, State, subscribe_failure}
     end;
 handle_packet(#suback{} = Pkt, StateName, State) ->
     handle_ignored_packet(Pkt, StateName, State);
 handle_packet(#unsuback{id = ID, codes = Codes} = Pkt, StateName,
 	      #state{in_flight = #unsubscribe{id = ID} = UnSub} = State) ->
     rtb_stats:incr({'unsubscribe-rtt', calc_rtt(UnSub)}),
-    State1 = State#state{in_flight = undefined},
     case lists:any(fun mod_mqtt_codec:is_error_code/1, Codes) of
-        true -> handle_error_packet(Pkt, StateName, State1);
-        false -> resend(State1)
-    end;
+        true -> log_error_packet(Pkt, StateName, State);
+        false -> ok
+    end,
+    resend(State#state{in_flight = undefined});
 handle_packet(#unsuback{} = Pkt, StateName, State) ->
     handle_ignored_packet(Pkt, StateName, State);
 handle_packet(#puback{id = ID, code = Code} = Pkt, StateName,
 	      #state{in_flight = #publish{id = ID, qos = 1} = Pub} = State) ->
     rtb_stats:incr({'publish-rtt', calc_rtt(Pub)}),
-    State1 = State#state{in_flight = undefined},
     case mod_mqtt_codec:is_error_code(Code) of
-        true -> handle_error_packet(Pkt, StateName, State1);
-        false -> resend(State1)
-    end;
+        true -> log_error_packet(Pkt, StateName, State);
+        false -> ok
+    end,
+    resend(State#state{in_flight = undefined});
 handle_packet(#puback{} = Pkt, StateName, State) ->
     handle_ignored_packet(Pkt, StateName, State);
 handle_packet(#pubrec{id = ID, code = Code} = Pkt, StateName,
@@ -415,26 +418,34 @@ handle_packet(#pubrec{id = ID, code = Code} = Pkt, StateName,
     case mod_mqtt_codec:is_error_code(Code) of
         true ->
             rtb_stats:incr({'publish-rtt', calc_rtt(Pub)}),
-            State1 = State#state{in_flight = undefined},
-            handle_error_packet(Pkt, StateName, State1);
+            log_error_packet(Pkt, StateName, State),
+            resend(State#state{in_flight = undefined});
         false ->
             Pubrel = #pubrel{id = ID, meta = Pub#publish.meta},
             State1 = State#state{in_flight = Pubrel},
             send(StateName, State1, Pubrel)
     end;
-handle_packet(#pubrec{id = ID}, StateName, State) ->
-    lager:warning("Got unexpected PUBREC with id=~B, "
-                  "sending PUBREL with error reason code", [ID]),
-    Pubrel = #pubrel{id = ID, code = 'packet-identifier-not-found'},
-    send(StateName, State, Pubrel);
+handle_packet(#pubrec{id = ID, code = Code}, StateName, State) ->
+    case mod_mqtt_codec:is_error_code(Code) of
+        false ->
+            Code1 = 'packet-identifier-not-found',
+            lager:warning("Got unexpected PUBREC with id=~B, "
+                          "sending PUBREL with error code '~s'", [ID, Code1]),
+            Pubrel = #pubrel{id = ID, code = Code1},
+            send(StateName, State, Pubrel);
+        true ->
+            lager:warning("Ignoring unexpected PUBREC with id=~B and code '~s'",
+                          [ID, Code]),
+            {ok, State}
+    end;
 handle_packet(#pubcomp{id = ID, code = Code} = Pkt, StateName,
               #state{in_flight = #pubrel{id = ID} = Pubrel} = State) ->
     rtb_stats:incr({'publish-rtt', calc_rtt(Pubrel)}),
-    State1 = State#state{in_flight = undefined},
     case mod_mqtt_codec:is_error_code(Code) of
-        true -> handle_error_packet(Pkt, StateName, State1);
-        false -> resend(State1)
-    end;
+        true -> log_error_packet(Pkt, StateName, State);
+        false -> ok
+    end,
+    resend(State#state{in_flight = undefined});
 handle_packet(#pubcomp{} = Pkt, StateName, State) ->
     handle_ignored_packet(Pkt, StateName, State);
 handle_packet(#publish{qos = 0} = Pkt, _StateName, State) ->
@@ -461,9 +472,10 @@ handle_packet(#pubrel{id = ID}, StateName, State) ->
             State1 = State#state{acks = Acks},
             send(StateName, State1, #pubcomp{id = ID});
         error ->
+            Code = 'packet-identifier-not-found',
             lager:warning("Got unexpected PUBREL with id=~B, "
-                          "sending PUBCOMP with error reason code", [ID]),
-            Pubcomp = #pubcomp{id = ID, code = 'packet-identifier-not-found'},
+                          "sending PUBCOMP with error code ~s", [ID, Code]),
+            Pubcomp = #pubcomp{id = ID, code = Code},
             send(StateName, State, Pubcomp)
     end;
 handle_packet(#pingresp{}, _StateName,
@@ -477,16 +489,6 @@ handle_unexpected_packet(Pkt, StateName, State) ->
     lager:warning("Unexpected packet:~n~s~n** in state ~s:~n~s",
 		  [pp(Pkt), StateName, pp(State)]),
     {error, State, {unexpected_packet, element(1, Pkt)}}.
-
-handle_error_packet(Pkt, StateName, State) ->
-    lager:warning("Got packet with error code(s):~n~s~n** in state ~s:~n~s",
-		  [pp(Pkt), StateName, pp(State)]),
-    case Pkt of
-        #suback{} ->
-            {error, State, subscribe_failure};
-        _ ->
-            {ok, State}
-    end.
 
 handle_ignored_packet(Pkt, StateName, State) ->
     lager:warning("Ignoring unexpected packet:~n~s~n** in state ~s:~n~s",
@@ -553,6 +555,11 @@ stop(StateName, State, Reason) ->
                           reconnect_after = {Timeout, Factor*2}},
     State3 = set_timeout(State2, Timeout*Factor),
     next_state(disconnected, State3).
+
+-spec log_error_packet(mqtt_packet(), state_name(), state()) -> ok.
+log_error_packet(Pkt, StateName, State) ->
+    lager:warning("Got packet with error code(s):~n~s~n** in state ~s:~n~s",
+		  [pp(Pkt), StateName, pp(State)]).
 
 register_session(State) ->
     ReconnectAfter = case State#state.reconnect_after of

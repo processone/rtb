@@ -22,9 +22,14 @@
 -export([pp/1, pp/2, format_error/1, format_reason_code/1]).
 -export([error_reason_code/1, is_error_code/1]).
 %% Validators
--export([topic/1, topic_filter/1, qos/1]).
+-export([topic/1, topic_filter/1, qos/1, utf8/1]).
+-export([decode_varint/1]).
 
 -include("mod_mqtt.hrl").
+
+-define(MAX_UINT16, 65535).
+-define(MAX_UINT32, 4294967295).
+-define(MAX_VARINT, 268435456).
 
 -record(codec_state, {version    :: undefined | mqtt_version(),
                       type       :: undefined | non_neg_integer(),
@@ -37,6 +42,7 @@
 			{payload_too_big, integer()} |
 			{bad_packet_type, char()} |
 			{bad_packet, atom()} |
+                        {unexpected_packet, atom()} |
 			{bad_reason_code, atom(), char()} |
                         {bad_properties, atom()} |
                         {bad_property, atom(), atom()} |
@@ -147,7 +153,8 @@ encode(Version, Pkt) ->
         #unsuback{} -> encode_unsuback(Version, Pkt);
         #pingreq{} -> encode_pingreq();
         #pingresp{} -> encode_pingresp();
-        #disconnect{} -> encode_disconnect(Version, Pkt)
+        #disconnect{} -> encode_disconnect(Version, Pkt);
+        #auth{} -> encode_auth(Pkt)
     end.
 
 -spec pp(any()) -> iolist().
@@ -163,6 +170,8 @@ format_error({bad_packet_type, Type}) ->
     format("Unexpected packet type: ~B", [Type]);
 format_error({bad_packet, Name}) ->
     format("Malformed ~s packet", [string:to_upper(atom_to_list(Name))]);
+format_error({unexpected_packet, Name}) ->
+    format("Unexpected ~s packet", [string:to_upper(atom_to_list(Name))]);
 format_error({bad_reason_code, Name, Code}) ->
     format("Unexpected reason code in ~s code: ~B",
            [string:to_upper(atom_to_list(Name)), Code]);
@@ -211,6 +220,7 @@ error_reason_code({unsupported_protocol_name, _, _}) ->
 error_reason_code({unsupported_protocol_version, _, _}) ->
     'unsupported-protocol-version';
 error_reason_code({payload_too_big, _}) -> 'packet-too-large';
+error_reason_code({unexpected_packet, _}) -> 'protocol-error';
 error_reason_code(_) -> 'malformed-packet'.
 
 -spec format_reason_code(reason_code()) -> string().
@@ -296,7 +306,7 @@ decode_varint(Data) ->
 decode_varint(<<C, Data/binary>>, Val, Mult) ->
     NewVal = Val + (C band 127) * Mult,
     NewMult = Mult*128,
-    if NewMult > 268435456 ->
+    if NewMult > ?MAX_VARINT ->
 	    err(bad_varint);
        (C band 128) == 0 ->
 	    {NewVal, Data};
@@ -308,9 +318,10 @@ decode_varint(_, _, _) ->
 
 -spec decode_pkt(mqtt_version() | undefined,
                  non_neg_integer(), non_neg_integer(), binary()) -> mqtt_packet().
-decode_pkt(Version, Type, Flags, Data) ->
+decode_pkt(undefined, 1, Flags, Data) ->
+    decode_connect(Flags, Data);
+decode_pkt(Version, Type, Flags, Data) when Version /= undefined, Type>1 ->
     case Type of
-	1 -> decode_connect(Flags, Data);
 	2 -> decode_connack(Version, Flags, Data);
 	3 -> decode_publish(Version, Flags, Data);
 	4 -> decode_puback(Version, Flags, Data);
@@ -324,8 +335,11 @@ decode_pkt(Version, Type, Flags, Data) ->
 	12 -> decode_pingreq(Flags, Data);
 	13 -> decode_pingresp(Flags, Data);
 	14 -> decode_disconnect(Version, Flags, Data);
-	_ -> err({bad_packet_type, Type})
-    end.
+        15 when Version == ?MQTT_VERSION_5 -> decode_auth(Flags, Data);
+        _ -> err({bad_packet_type, Type})
+    end;
+decode_pkt(_, Type, _, _) ->
+    err({unexpected_packet, decode_packet_type(Type)}).
 
 -spec decode_connect(non_neg_integer(), binary()) -> connect().
 decode_connect(Flags, <<ProtoLen:16, Proto:ProtoLen/binary,
@@ -342,21 +356,31 @@ decode_connect(_, _) ->
 -spec decode_connect(mqtt_version(), non_neg_integer(), binary()) -> connect().
 decode_connect(Version, Flags,
                <<UserFlag:1, PassFlag:1, WillRetain:1,
-                 WillQoS:2, WillFlag:1, CleanSession:1,
-                 Reserved:1, KeepAlive:16,
-                 ClientIDLen:16, ClientID:ClientIDLen/binary,
-                 Data1/binary>>) ->
+                 WillQoS:2, WillFlag:1, CleanStart:1,
+                 Reserved:1, KeepAlive:16, Data/binary>>) ->
     assert(Flags, 0, {bad_flags, connect}),
     assert(Reserved, 0, {bad_flag, reserved}),
-    {Will, Data2} = decode_will(WillFlag, WillRetain, WillQoS, Data1),
-    {Username, Password} = decode_user_pass(UserFlag, PassFlag, Data2),
-    #connect{proto_level = Version,
-             will = Will,
-             clean_session = dec_bool(CleanSession),
-             keep_alive = KeepAlive,
-             client_id = utf8(ClientID),
-             username = utf8(Username),
-             password = Password};
+    {Props, Data1} = case Version of
+                         ?MQTT_VERSION_5 -> decode_props(connect, Data);
+                         ?MQTT_VERSION_4 -> {#{}, Data}
+                     end,
+    case Data1 of
+        <<ClientIDLen:16, ClientID:ClientIDLen/binary, Data2/binary>> ->
+            {Will, WillProps, Data3} =
+                decode_will(Version, WillFlag, WillRetain, WillQoS, Data2),
+            {Username, Password} = decode_user_pass(UserFlag, PassFlag, Data3),
+            #connect{proto_level = Version,
+                     will = Will,
+                     will_properties = WillProps,
+                     properties = Props,
+                     clean_start = dec_bool(CleanStart),
+                     keep_alive = KeepAlive,
+                     client_id = utf8(ClientID),
+                     username = utf8(Username),
+                     password = Password};
+        _ ->
+            err({bad_packet, connect})
+    end;
 decode_connect(_, _, _) ->
     err({bad_packet, connect}).
 
@@ -498,22 +522,53 @@ decode_disconnect(Version, Flags, Payload) ->
     {Code, PropMap} = decode_code_with_props(Version, disconnect, Payload),
     #disconnect{code = Code, properties = PropMap}.
 
--spec decode_will(0|1, 0|1, qos(), binary()) ->
-			 {undefined | publish(), binary()}.
-decode_will(0, WillRetain, WillQoS, Data) ->
+-spec decode_auth(non_neg_integer(), binary()) -> auth().
+decode_auth(Flags, Payload) ->
+    assert(Flags, 0, {bad_flags, auth}),
+    {Code, PropMap} = decode_code_with_props(?MQTT_VERSION_5, auth, Payload),
+    #auth{code = Code, properties = PropMap}.
+
+-spec decode_packet_type(char()) -> atom().
+decode_packet_type(1) -> connect;
+decode_packet_type(2) -> connack;
+decode_packet_type(3) -> publish;
+decode_packet_type(4) -> puback;
+decode_packet_type(5) -> pubrec;
+decode_packet_type(6) -> pubrel;
+decode_packet_type(7) -> pubcomp;
+decode_packet_type(8) -> subscribe;
+decode_packet_type(9) -> suback;
+decode_packet_type(10) -> unsubscribe;
+decode_packet_type(11) -> unsuback;
+decode_packet_type(12) -> pingreq;
+decode_packet_type(13) -> pingresp;
+decode_packet_type(14) -> disconnect;
+decode_packet_type(15) -> auth;
+decode_packet_type(T) -> err({bad_packet_type, T}).
+
+-spec decode_will(mqtt_version(), 0|1, 0|1, qos(), binary()) ->
+			 {undefined | publish(), properties(), binary()}.
+decode_will(_, 0, WillRetain, WillQoS, Data) ->
     assert(WillRetain, 0, {bad_flag, will_retain}),
     assert(WillQoS, 0, {bad_flag, will_qos}),
-    {undefined, Data};
-decode_will(1, WillRetain, WillQoS,
-	    <<TLen:16, Topic:TLen/binary,
-	      MLen:16, Message:MLen/binary,
-	      Data/binary>>) ->
-    {#publish{retain = dec_bool(WillRetain),
-	      qos = qos(WillQoS),
-	      topic = topic(Topic),
-	      payload = Message},
-     Data};
-decode_will(_, _, _, _) ->
+    {undefined, #{}, Data};
+decode_will(Version, 1, WillRetain, WillQoS, Data) ->
+    {Props, Data1} = case Version of
+                         ?MQTT_VERSION_5 -> decode_props(connect, Data);
+                         ?MQTT_VERSION_4 -> {#{}, Data}
+                     end,
+    case Data1 of
+        <<TLen:16, Topic:TLen/binary,
+          MLen:16, Message:MLen/binary, Data2/binary>> ->
+            {#publish{retain = dec_bool(WillRetain),
+                      qos = qos(WillQoS),
+                      topic = topic(Topic),
+                      payload = Message},
+             Props, Data2};
+        _ ->
+            err(bad_will_topic_or_message)
+    end;
+decode_will(_, _, _, _, _) ->
     err(bad_will_topic_or_message).
 
 -spec decode_user_pass(non_neg_integer(), non_neg_integer(),
@@ -615,7 +670,7 @@ decode_props(Pkt, Data, Props) ->
     Props1 = maps:update_with(
                Name,
                fun(Vals) when is_list(Val) ->
-                       Val ++ Vals;
+                       Vals ++ Val;
                   (_) ->
                        err({duplicated_property, Pkt, Name})
                end, Val, Props),
@@ -672,13 +727,15 @@ decode_prop(_, 17, <<I:32, Bin/binary>>) ->
     {session_expiry_interval, I, Bin};
 decode_prop(Pkt, 42, Data) ->
     decode_bool_prop(Pkt, shared_subscription_available, Data);
-decode_prop(Pkt, 11, Data) ->
+decode_prop(Pkt, 11, Data) when Pkt == publish; Pkt == subscribe ->
     case decode_varint(Data) of
-        {ID, Bin} ->
+        {ID, Bin} when Pkt == publish ->
+            {subscription_identifier, [ID], Bin};
+        {ID, Bin} when Pkt == subscribe ->
             {subscription_identifier, ID, Bin};
         _ ->
-            err({bad_property, Pkt, subscription_identifier})
-    end;
+            err({bad_property, publish, subscription_identifier})
+     end;
 decode_prop(Pkt, 41, Data) ->
     decode_bool_prop(Pkt, subscription_identifiers_available, Data);
 decode_prop(_, 35, <<Alias:16, Bin/binary>>) when Alias>0 ->
@@ -715,8 +772,8 @@ decode_code_with_props(_, connack, <<Code, Props/binary>>) ->
              {PropMap, <<>>} = decode_props(connack, Props),
              PropMap
      end};
-decode_code_with_props(_, _Pkt, <<>>) ->
-    {success, #{}};
+decode_code_with_props(_, Pkt, <<>>) ->
+    {decode_reason_code(Pkt, 0), #{}};
 decode_code_with_props(?MQTT_VERSION_5, Pkt, <<Code>>) ->
     {decode_reason_code(Pkt, Code), #{}};
 decode_code_with_props(?MQTT_VERSION_5, Pkt, <<Code, Props/binary>>) ->
@@ -869,7 +926,7 @@ decode_reason_code(connack, Code) -> decode_connack_code(Code).
 %%%===================================================================
 encode_connect(#connect{proto_level = Version, properties = Props,
                         will = Will, will_properties = WillProps,
-                        clean_session = CleanSession,
+                        clean_start = CleanStart,
                         keep_alive = KeepAlive, client_id = ClientID,
                         username = Username, password = Password}) ->
     UserFlag = Username /= <<>>,
@@ -882,7 +939,7 @@ encode_connect(#connect{proto_level = Version, properties = Props,
     Header = <<4:16, "MQTT", Version, (enc_bool(UserFlag)):1,
 	       (enc_bool(PassFlag)):1, (enc_bool(WillRetain)):1,
 	       WillQoS:2, (enc_bool(WillFlag)):1,
-	       (enc_bool(CleanSession)):1, 0:1,
+	       (enc_bool(CleanStart)):1, 0:1,
 	       KeepAlive:16>>,
     EncClientID = <<(size(ClientID)):16, ClientID/binary>>,
     EncWill = encode_will(Will),
@@ -904,7 +961,7 @@ encode_connack(Version, #connack{session_present = SP,
     Payload = [enc_bool(SP),
                encode_connack_code(Version, Code),
                encode_props(Version, Props)],
-    <<2:4, 0:4, 2, (encode_with_len(Payload))/binary>>.
+    <<2:4, 0:4, (encode_with_len(Payload))/binary>>.
 
 encode_publish(Version, #publish{qos = QoS, retain = Retain, dup = Dup,
                                  topic = Topic, id = ID, payload = Payload,
@@ -947,8 +1004,10 @@ encode_subscribe(Version, #subscribe{id = ID,
     Payload = [<<ID:16>>, encode_props(Version, Props), EncFilters],
     <<8:4, 2:4, (encode_with_len(Payload))/binary>>.
 
-encode_suback(_, #suback{id = ID, codes = Codes}) ->
-    Payload = [<<ID:16>>|lists:map(fun encode_reason_code/1, Codes)],
+encode_suback(Version, #suback{id = ID, codes = Codes,
+                               properties = Props}) when ID>0 ->
+    Payload = [<<ID:16>>, encode_props(Version, Props)
+               |[encode_reason_code(Code) || Code <- Codes]],
     <<9:4, 0:4, (encode_with_len(Payload))/binary>>.
 
 encode_unsubscribe(Version, #unsubscribe{id = ID,
@@ -958,8 +1017,16 @@ encode_unsubscribe(Version, #unsubscribe{id = ID,
     Payload = [<<ID:16>>, encode_props(Version, Props), EncFilters],
     <<10:4, 2:4, (encode_with_len(Payload))/binary>>.
 
-encode_unsuback(_, #unsuback{id = ID}) when ID>0 ->
-    <<11:4, 0:4, 2, ID:16>>.
+encode_unsuback(Version, #unsuback{id = ID, codes = Codes,
+                                   properties = Props}) when ID>0 ->
+    EncCodes = case Version of
+                   ?MQTT_VERSION_5 ->
+                       [encode_reason_code(Code) || Code <- Codes];
+                   ?MQTT_VERSION_4 ->
+                       []
+               end,
+    Payload = [<<ID:16>>, encode_props(Version, Props)|EncCodes],
+    <<11:4, 0:4, (encode_with_len(Payload))/binary>>.
 
 encode_pingreq() ->
     <<12:4, 0:4, 0>>.
@@ -967,8 +1034,13 @@ encode_pingreq() ->
 encode_pingresp() ->
     <<13:4, 0:4, 0>>.
 
-encode_disconnect(_, #disconnect{}) ->
-    <<14:4, 0:4, 0>>.
+encode_disconnect(Version, #disconnect{code = Code, properties = Props}) ->
+    Data = encode_code_with_props(Version, Code, Props),
+    <<14:4, 0:4, (encode_with_len(Data))/binary>>.
+
+encode_auth(#auth{code = Code, properties = Props}) ->
+    Data = encode_code_with_props(?MQTT_VERSION_5, Code, Props),
+    <<15:4, 0:4, (encode_with_len(Data))/binary>>.
 
 -spec encode_with_len(iodata()) -> binary().
 encode_with_len(IOData) ->
@@ -979,7 +1051,7 @@ encode_with_len(IOData) ->
 -spec encode_varint(non_neg_integer()) -> binary().
 encode_varint(X) when X < 128 ->
     <<0:1, X:7>>;
-encode_varint(X) when X < 268435456 ->
+encode_varint(X) when X < ?MAX_VARINT ->
     <<1:1, (X rem 128):7, (encode_varint(X div 128))/binary>>.
 
 -spec encode_props(mqtt_version(), properties()) -> binary().
@@ -1007,17 +1079,17 @@ encode_prop(content_type, T) when T /= <<>> ->
     <<3, (size(T)):16, T/binary>>;
 encode_prop(correlation_data, Data) when Data /= <<>> ->
     <<9, (size(Data)):16, Data/binary>>;
-encode_prop(maximum_packet_size, Size) when Size>0, Size<4294967296 ->
+encode_prop(maximum_packet_size, Size) when Size>0, Size=<?MAX_UINT32 ->
     <<39, Size:32>>;
-encode_prop(maximum_qos, QoS) when QoS < 2 ->
+encode_prop(maximum_qos, QoS) when QoS>=0, QoS<2 ->
     <<36, QoS>>;
-encode_prop(message_expiry_interval, I) when I>0 ->
+encode_prop(message_expiry_interval, I) when I>0, I=<?MAX_UINT32 ->
     <<2, I:32>>;
 encode_prop(payload_format_indicator, utf8) ->
     <<1, 1>>;
 encode_prop(reason_string, S) when S /= <<>> ->
     <<31, (size(S)):16, S/binary>>;
-encode_prop(receive_maximum, Max) when Max>0, Max<65536 ->
+encode_prop(receive_maximum, Max) when Max>0, Max=<?MAX_UINT16 ->
     <<33, Max:16>>;
 encode_prop(request_problem_information, false) ->
     <<23, 0>>;
@@ -1027,29 +1099,31 @@ encode_prop(response_information, S) when S /= <<>> ->
     <<26, (size(S)):16, S/binary>>;
 encode_prop(response_topic, T) when T /= <<>> ->
     <<8, (size(T)):16, T/binary>>;
-encode_prop(retain_available, 0) ->
+encode_prop(retain_available, false) ->
     <<37, 0>>;
-encode_prop(server_keep_alive, Secs) ->
+encode_prop(server_keep_alive, Secs) when Secs>=0, Secs=<?MAX_UINT16 ->
     <<19, Secs:16>>;
 encode_prop(server_reference, S) when S /= <<>> ->
     <<28, (size(S)):16, S/binary>>;
-encode_prop(session_expiry_interval, I) when I>=0, I<4294967296 ->
+encode_prop(session_expiry_interval, I) when I>=0, I=<?MAX_UINT32 ->
     <<17, I:32>>;
 encode_prop(shared_subscription_available, false) ->
     <<42, 0>>;
-encode_prop(subscription_identifier, ID) ->
+encode_prop(subscription_identifier, [_|_] = IDs) ->
+    [encode_prop(subscription_identifier, ID) || ID <- IDs];
+encode_prop(subscription_identifier, ID) when ID>0, ID<?MAX_VARINT ->
     <<11, (encode_varint(ID))/binary>>;
 encode_prop(subscription_identifiers_available, false) ->
     <<41, 0>>;
-encode_prop(topic_alias, Alias) when Alias>0, Alias<65536 ->
+encode_prop(topic_alias, Alias) when Alias>0, Alias=<?MAX_UINT16 ->
     <<35, Alias:16>>;
-encode_prop(topic_alias_maximum, Max) when Max>0 ->
+encode_prop(topic_alias_maximum, Max) when Max>0, Max=<?MAX_UINT16 ->
     <<34, Max:16>>;
 encode_prop(user_property, Pairs) ->
     [<<38, (encode_utf8_pair(Pair))/binary>> || Pair <- Pairs];
 encode_prop(wildcard_subscription_available, false) ->
     <<40, 0>>;
-encode_prop(will_delay_interval, I) when I>0 ->
+encode_prop(will_delay_interval, I) when I>0, I=<?MAX_UINT32 ->
     <<24, I:32>>;
 encode_prop(_, _) ->
     <<>>.
@@ -1098,7 +1172,8 @@ encode_connack_code(_, 'unsupported-protocol-version') -> 1;
 encode_connack_code(_, 'client-identifier-not-valid') -> 2;
 encode_connack_code(_, 'server-unavailable') -> 3;
 encode_connack_code(_, 'bad-user-name-or-password') -> 4;
-encode_connack_code(_, 'not-authorized') -> 5.
+encode_connack_code(_, 'not-authorized') -> 5;
+encode_connack_code(_, _) -> 128.
 
 -spec encode_reason_code(char() | reason_code()) -> char().
 encode_reason_code('success') -> 0;
@@ -1209,8 +1284,6 @@ qos(QoS) ->
 
 -spec topic(binary()) -> binary().
 topic(<<>>) ->
-    err(bad_topic);
-topic(<<$$, _/binary>>) ->
     err(bad_topic);
 topic(Bin) when is_binary(Bin) ->
     ok = check_topic(Bin),
