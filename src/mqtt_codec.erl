@@ -402,7 +402,7 @@ decode_publish(Version, Flags, <<TLen:16, Topic:TLen/binary, Data/binary>>) ->
     #publish{dup = dec_bool(DUP),
 	     qos = QoS,
 	     retain = dec_bool(Retain),
-	     topic = topic(Topic),
+	     topic = topic(Topic, Props),
 	     id = ID,
              properties = Props,
 	     payload = Payload};
@@ -1283,13 +1283,20 @@ qos(QoS) ->
     err({bad_qos, QoS}).
 
 -spec topic(binary()) -> binary().
-topic(<<>>) ->
-    err(bad_topic);
-topic(Bin) when is_binary(Bin) ->
+topic(Topic) ->
+    topic(Topic, #{}).
+
+-spec topic(binary(), properties()) -> binary().
+topic(<<>>, Props) ->
+    case maps:is_key(topic_alias, Props) of
+        true -> <<>>;
+        false -> err(bad_topic)
+    end;
+topic(Bin, _) when is_binary(Bin) ->
     ok = check_topic(Bin),
     ok = check_utf8(Bin),
     Bin;
-topic(_) ->
+topic(_, _) ->
     err(bad_topic).
 
 -spec topic_filter(binary()) -> binary().
