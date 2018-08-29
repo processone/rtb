@@ -236,12 +236,8 @@ connecting(connect, State) ->
                      password = State1#state.password,
                      properties = #{session_expiry_interval => SessionExpiry,
                                     request_response_information => true}},
-	    case send(connecting, State1, Pkt) of
-		{ok, State2} ->
-		    next_state(waiting_for_connack, State2);
-		{error, State2, Reason} ->
-		    stop(connecting, State2, Reason)
-	    end;
+	    State2 = send(connecting, State1, Pkt),
+            next_state(waiting_for_connack, State2);
 	{error, Reason} ->
 	    stop(connecting, State, Reason)
     end;
@@ -263,13 +259,9 @@ waiting_for_connack(Event, From, State) ->
 
 session_established(timeout, #state{pingreq = undefined} = State) ->
     Ping = attach_timestamp(#pingreq{}),
-    case send(session_established, State, Ping) of
-	{ok, State1} ->
-	    State2 = State1#state{pingreq = Ping},
-	    next_state(session_established, State2);
-	{error, State1, Reason} ->
-	    stop(session_established, State1, Reason)
-    end;
+    State1 = send(session_established, State, Ping),
+    State2 = State1#state{pingreq = Ping},
+    next_state(session_established, State2);
 session_established(timeout, State) ->
     stop(session_established, State, ping_timeout);
 session_established(Event, State) ->
@@ -377,7 +369,7 @@ handle_packet(#connack{} = Pkt, waiting_for_connack, State) ->
                          true ->
                              State1
                      end,
-            subscribe(State2);
+            {ok, subscribe(State2)};
 	Code ->
             Reason = maps:get(reason_string, Pkt#connack.properties, <<>>),
 	    {error, State, {auth, Code, Reason}}
@@ -394,7 +386,7 @@ handle_packet(#suback{id = ID, codes = Codes} = Pkt, StateName,
                          true -> State1;
                          false -> register_session(State1)
                      end,
-            resend(State2#state{subscribed = true});
+            {ok, resend(State2#state{subscribed = true})};
         _ ->
             log_error_packet(Pkt, StateName, State),
             {error, State, subscribe_failure}
@@ -408,7 +400,7 @@ handle_packet(#unsuback{id = ID, codes = Codes} = Pkt, StateName,
         true -> log_error_packet(Pkt, StateName, State);
         false -> ok
     end,
-    resend(State#state{in_flight = undefined});
+    {ok, resend(State#state{in_flight = undefined})};
 handle_packet(#unsuback{} = Pkt, StateName, State) ->
     handle_ignored_packet(Pkt, StateName, State);
 handle_packet(#puback{id = ID, code = Code} = Pkt, StateName,
@@ -418,7 +410,7 @@ handle_packet(#puback{id = ID, code = Code} = Pkt, StateName,
         true -> log_error_packet(Pkt, StateName, State);
         false -> ok
     end,
-    resend(State#state{in_flight = undefined});
+    {ok, resend(State#state{in_flight = undefined})};
 handle_packet(#puback{} = Pkt, StateName, State) ->
     handle_ignored_packet(Pkt, StateName, State);
 handle_packet(#pubrec{id = ID, code = Code} = Pkt, StateName,
@@ -427,11 +419,11 @@ handle_packet(#pubrec{id = ID, code = Code} = Pkt, StateName,
         true ->
             rtb_stats:incr({'publish-rtt', calc_rtt(Pub)}),
             log_error_packet(Pkt, StateName, State),
-            resend(State#state{in_flight = undefined});
+            {ok, resend(State#state{in_flight = undefined})};
         false ->
             Pubrel = #pubrel{id = ID, meta = Pub#publish.meta},
             State1 = State#state{in_flight = Pubrel},
-            send(StateName, State1, Pubrel)
+            {ok, send(StateName, State1, Pubrel)}
     end;
 handle_packet(#pubrec{id = ID, code = Code}, StateName, State) ->
     case mqtt_codec:is_error_code(Code) of
@@ -440,7 +432,7 @@ handle_packet(#pubrec{id = ID, code = Code}, StateName, State) ->
             lager:warning("Got unexpected PUBREC with id=~B, "
                           "sending PUBREL with error code '~s'", [ID, Code1]),
             Pubrel = #pubrel{id = ID, code = Code1},
-            send(StateName, State, Pubrel);
+            {ok, send(StateName, State, Pubrel)};
         true ->
             lager:warning("Ignoring unexpected PUBREC with id=~B and code '~s'",
                           [ID, Code]),
@@ -453,7 +445,7 @@ handle_packet(#pubcomp{id = ID, code = Code} = Pkt, StateName,
         true -> log_error_packet(Pkt, StateName, State);
         false -> ok
     end,
-    resend(State#state{in_flight = undefined});
+    {ok, resend(State#state{in_flight = undefined})};
 handle_packet(#pubcomp{} = Pkt, StateName, State) ->
     handle_ignored_packet(Pkt, StateName, State);
 handle_packet(#publish{qos = 0} = Pkt, _StateName, State) ->
@@ -463,7 +455,7 @@ handle_packet(#publish{qos = 0} = Pkt, _StateName, State) ->
 handle_packet(#publish{qos = 1, id = ID} = Pkt, StateName, State) ->
     rtb_stats:incr('publish-in'),
     stop_tracking(Pkt),
-    send(StateName, State, #puback{id = ID});
+    {ok, send(StateName, State, #puback{id = ID})};
 handle_packet(#publish{qos = 2, id = ID} = Pkt, StateName, State) ->
     State1 = case maps:is_key(ID, State#state.acks) of
 		 true -> State;
@@ -473,18 +465,18 @@ handle_packet(#publish{qos = 2, id = ID} = Pkt, StateName, State) ->
 		     Acks = maps:put(ID, true, State#state.acks),
 		     State#state{acks = Acks}
 	     end,
-    send(StateName, State1, #pubrec{id = ID});
+    {ok, send(StateName, State1, #pubrec{id = ID})};
 handle_packet(#pubrel{id = ID}, StateName, State) ->
     case maps:take(ID, State#state.acks) of
         {_, Acks} ->
             State1 = State#state{acks = Acks},
-            send(StateName, State1, #pubcomp{id = ID});
+            {ok, send(StateName, State1, #pubcomp{id = ID})};
         error ->
             Code = 'packet-identifier-not-found',
             lager:warning("Got unexpected PUBREL with id=~B, "
                           "sending PUBCOMP with error code ~s", [ID, Code]),
             Pubcomp = #pubcomp{id = ID, code = Code},
-            send(StateName, State, Pubcomp)
+            {ok, send(StateName, State, Pubcomp)}
     end;
 handle_packet(#pingresp{}, _StateName,
               #state{pingreq = #pingreq{} = Ping} = State) ->
@@ -527,7 +519,7 @@ disconnect(_StateName, State) ->
 publish(StateName, State) ->
     case make_publish(publish, State) of
 	#publish{} = Pkt ->
-	    send(StateName, State, Pkt);
+	    {ok, send(StateName, State, Pkt)};
 	undefined ->
 	    {ok, State}
     end.
@@ -590,6 +582,7 @@ unregister_session(StateName, _State, Reason) ->
 	    rtb_stats:incr({'error-reason', {Reason, StateName}})
     end.
 
+-spec subscribe(state()) -> state().
 subscribe(#state{subscribed = true} = State) ->
     State1 = register_session(State),
     resend(State1);
@@ -621,23 +614,29 @@ send(StateName, State, Pkt) when is_record(Pkt, subscribe) orelse
                            _ -> attach_timestamp(Pkt1)
                        end,
 	    State1 = State#state{id = ID, in_flight = InFlight},
-	    {ok, send(State1, Pkt1)};
+	    send(State1, Pkt1);
 	false ->
-	    try p1_queue:in(Pkt1, State#state.queue) of
-		Q ->
-                    rtb_stats:incr('queued'),
-		    State1 = State#state{id = ID, queue = Q},
-		    {ok, State1}
-	    catch error:full ->
-                    rtb_stats:decr(
-                      'queued', p1_queue:len(State#state.queue)),
-		    Q = p1_queue:clear(State#state.queue),
-		    State1 = State#state{queue = Q},
-		    {error, State1, queue_full}
-	    end
+            State1 = State#state{id = ID},
+            enqueue(StateName, State1, Pkt1)
     end;
 send(_StateName, State, Pkt) ->
-    {ok, send(State, Pkt)}.
+    send(State, Pkt).
+
+-spec enqueue(state_name(), state(), mqtt_packet()) -> state().
+enqueue(StateName, State, Pkt) ->
+    try p1_queue:in(Pkt, State#state.queue) of
+        Q ->
+            rtb_stats:incr('queued'),
+            State#state{queue = Q}
+    catch error:full ->
+            rtb_stats:incr('errors'),
+            rtb_stats:incr({'error-reason', {queue_full, StateName}}),
+            rtb_stats:decr('queued', p1_queue:len(State#state.queue)),
+            Q1 = p1_queue:clear(State#state.queue),
+            Q2 = p1_queue:in(Pkt, Q1),
+            rtb_stats:incr('queued'),
+            State#state{queue = Q2}
+    end.
 
 resend(#state{in_flight = undefined} = State) ->
     case p1_queue:out(State#state.queue) of
@@ -649,12 +648,12 @@ resend(#state{in_flight = undefined} = State) ->
             rtb_stats:decr('queued'),
             InFlight = attach_timestamp(Pkt),
 	    State1 = State#state{in_flight = InFlight, queue = Q},
-	    {ok, send(State1, Pkt)};
+	    send(State1, Pkt);
 	{empty, _} ->
-	    {ok, State}
+	    State
     end;
 resend(#state{in_flight = Pkt} = State) ->
-    {ok, send(State, set_dup_flag(Pkt))}.
+    send(State, set_dup_flag(Pkt)).
 
 send(#state{socket = {SockMod, Sock} = Socket} = State, Pkt) ->
     Pkt1 = case Pkt of
