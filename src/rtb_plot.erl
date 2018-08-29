@@ -24,11 +24,12 @@
 %%%===================================================================
 %%% API
 %%%===================================================================
+-spec render(atom(), atom()) -> ok.
 render(Name, Type) ->
     OutDir = rtb_http:docroot(),
     StatsDir = rtb_config:get_option(stats_dir),
-    DataFile = filename:join(StatsDir, Name ++ ".dat"),
-    do_render(Name, DataFile, OutDir, Type).
+    DataFile = filename:join(StatsDir, Name) ++ ".dat",
+    do_render(atom_to_list(Name), DataFile, OutDir, Type).
 
 %%%===================================================================
 %%% Internal functions
@@ -52,7 +53,7 @@ style(_) -> "line 1 linecolor rgb '#0060ad' linetype 1".
 
 with(hist) -> "boxes";
 with(_) -> "lines linestyle 1".
-    
+
 ylabel(hist) -> ["set ylabel '%' rotate by 0"];
 ylabel(rate) -> ["set ylabel 'number/sec'"];
 ylabel(_) -> ["set ylabel 'number'"].

@@ -186,12 +186,12 @@ metrics() ->
      #metric{name = connections},
      #metric{name = 'publish-in'},
      #metric{name = 'publish-out'},
-     #metric{name = 'queued'},
-     #metric{name = 'publish-loss',
+     #metric{name = 'queued', rate = false},
+     #metric{name = 'publish-loss', rate = false,
              call = fun() -> ets:info(rtb_tracker, size) end},
      #metric{name = errors},
      #metric{name = 'connect-rtt', type = hist},
-     #metric{name = 'login-rtt', type = hist},
+     #metric{name = 'auth-rtt', type = hist},
      #metric{name = 'subscribe-rtt', type = hist},
      #metric{name = 'publish-rtt', type = hist},
      #metric{name = 'ping-rtt', type = hist}].
@@ -355,7 +355,7 @@ handle_packet(#disconnect{} = Pkt, _StateName,
     {error, State, {disconnected, Pkt#disconnect.code, Reason}};
 handle_packet(#connack{} = Pkt, waiting_for_connack, State) ->
     StartTime = State#state.timeout - timer:seconds(State#state.keep_alive),
-    rtb_stats:incr({'login-rtt', current_time() - StartTime}),
+    rtb_stats:incr({'auth-rtt', current_time() - StartTime}),
     case Pkt#connack.code of
 	success ->
             CleanSession = rtb_config:get_option(clean_session),

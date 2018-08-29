@@ -21,7 +21,8 @@
 
 %% API
 -export([start_link/0, incr/1, incr/2, decr/1, decr/2,
-         set/2, del/1, lookup/1, get_type/1, get_metrics/0]).
+         set/2, del/1, lookup/1]).
+-export([get_type/1, get_metrics/0, flush/1]).
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
@@ -69,6 +70,9 @@ get_type(Metric) ->
 get_metrics() ->
     p1_server:call(?MODULE, get_metrics, infinity).
 
+flush(Metric) ->
+    p1_server:call(?MODULE, {flush, Metric}, infinity).
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -89,20 +93,23 @@ init([]) ->
             rtb:halt()
     end.
 
+handle_call({flush, Name}, _From, State) ->
+    case maps:get(Name, State#state.metrics, undefined) of
+        {_, hist, _, File, Fd} ->
+            case write_hist(Name, File, Fd) of
+                ok -> ok;
+                {error, File, Why} ->
+                    lager:critical("Failed to write to ~s: ~s",
+                                   [File, file:format_error(Why)])
+            end;
+        _ ->
+            ok
+    end,
+    {reply, ok, State};
 handle_call({get_type, Name}, _From, State) ->
     Type = case maps:get(Name, State#state.metrics, undefined) of
-               {_, hist, _, File, Fd} ->
-                   case write_hist(Name, File, Fd) of
-                       ok ->
-                           hist;
-                       {error, File, Why} ->
-                           rtb:halt("Failed to write to ~s: ~s",
-                                    [File, file:format_error(Why)])
-                   end;
-               {_, T, _, _, _} ->
-                   T;
-               undefined ->
-                   undefined
+               undefined -> undefined;
+               T -> element(2, T)
            end,
     {reply, Type, State};
 handle_call(get_metrics, _From, State) ->
@@ -118,12 +125,12 @@ handle_cast(_Msg, State) ->
 handle_info(log, State) ->
     erlang:send_after(?INTERVAL, self(), log),
     case log(State) of
-	ok ->
-	    {noreply, State};
+	ok -> ok;
 	{error, File, Why} ->
-	    rtb:halt("Failed to write to ~s: ~s",
-                     [File, file:format_error(Why)])
-    end;
+	    lager:critical("Failed to write to ~s: ~s",
+                           [File, file:format_error(Why)])
+    end,
+    {noreply, State};
 handle_info(_Info, State) ->
     {noreply, State}.
 
