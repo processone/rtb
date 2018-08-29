@@ -21,17 +21,18 @@
 
 %% API
 -export([start_link/0, incr/1, incr/2, decr/1, decr/2,
-         set/2, del/1, lookup/1, hist/1]).
+         set/2, del/1, lookup/1, get_type/1, get_metrics/0]).
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
 -define(INTERVAL, timer:seconds(1)).
 
+-include("rtb.hrl").
+
 -record(state, {mod  :: module(),
-		fd   :: file:fd(),
 		time :: integer(),
-		path :: file:filename()}).
+                metrics :: map()}).
 
 %%%===================================================================
 %%% API
@@ -39,17 +40,17 @@
 start_link() ->
     p1_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-incr(Counter) ->
-    incr(Counter, 1).
+incr(Metric) ->
+    incr(Metric, 1).
 
-incr(Counter, Incr) ->
-    ets:update_counter(?MODULE, Counter, Incr, {Counter, 0}).
+incr(Metric, Incr) ->
+    ets:update_counter(?MODULE, Metric, Incr, {Metric, 0}).
 
-decr(Counter) ->
-    decr(Counter, 1).
+decr(Metric) ->
+    decr(Metric, 1).
 
-decr(Counter, Decr) ->
-    ets:update_counter(?MODULE, Counter, -Decr, {Counter, 0}).
+decr(Metric, Decr) ->
+    ets:update_counter(?MODULE, Metric, -Decr, {Metric, 0}).
 
 set(Key, Val) ->
     ets:insert(?MODULE, {Key, Val}).
@@ -62,9 +63,11 @@ lookup(Key) ->
     catch _:badarg -> 0
     end.
 
-hist(Key) ->
-    Objs = ets:match_object(?MODULE, {{Key, '_'}, '_'}),
-    [{Name, Val} || {{_, Name}, Val} <- Objs].
+get_type(Metric) ->
+    p1_server:call(?MODULE, {get_type, Metric}, infinity).
+
+get_metrics() ->
+    p1_server:call(?MODULE, get_metrics, infinity).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -72,32 +75,42 @@ hist(Key) ->
 init([]) ->
     ets:new(?MODULE, [named_table, public,
 		      {write_concurrency, true}]),
-    Path = rtb_config:get_option(stats_file),
+    Dir = rtb_config:get_option(stats_dir),
     Mod = rtb_config:get_option(module),
-    try
-	lists:foreach(
-	  fun({Counter, F}) ->
-		  set(Counter, F(Counter))
-	  end, Mod:stats()),
-	ok = filelib:ensure_dir(Path),
-	{ok, Fd} = file:open(Path, [write, raw]),
-	ok = file:write(Fd, header(Mod)),
-	State = #state{mod = Mod, fd = Fd, path = Path,
-		       time = p1_time_compat:monotonic_time(seconds)},
-	ok = log(State),
-	erlang:send_after(?INTERVAL, self(), log),
-	lager:debug("Dumping statistics to ~s every ~B second(s)",
-                    [Path, ?INTERVAL div 1000]),
-	{ok, State}
-    catch _:{badmatch, {error, Why}} ->
-	    lager:critical("Failed to read/write file ~s: ~s",
-			   [Path, file:format_error(Why)]),
-	    {stop, Why}
+    case init_metrics(Mod, Dir) of
+        {ok, Metrics} ->
+            State = #state{mod = Mod, metrics = Metrics,
+                           time = p1_time_compat:monotonic_time(seconds)},
+            erlang:send_after(?INTERVAL, self(), log),
+            lager:debug("Dumping statistics to ~s every ~B second(s)",
+                        [Dir, ?INTERVAL div 1000]),
+            {ok, State};
+        error ->
+            rtb:halt()
     end.
 
+handle_call({get_type, Name}, _From, State) ->
+    Type = case maps:get(Name, State#state.metrics, undefined) of
+               {_, hist, _, File, Fd} ->
+                   case write_hist(Name, File, Fd) of
+                       ok ->
+                           hist;
+                       {error, File, Why} ->
+                           rtb:halt("Failed to write to ~s: ~s",
+                                    [File, file:format_error(Why)])
+                   end;
+               {_, T, _, _, _} ->
+                   T;
+               undefined ->
+                   undefined
+           end,
+    {reply, Type, State};
+handle_call(get_metrics, _From, State) ->
+    Metrics = maps:to_list(State#state.metrics),
+    Names = [Name || {Name, _} <- lists:keysort(2, Metrics)],
+    {reply, Names, State};
 handle_call(_Request, _From, State) ->
-    Reply = ok,
-    {reply, Reply, State}.
+    {noreply, State}.
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -107,9 +120,9 @@ handle_info(log, State) ->
     case log(State) of
 	ok ->
 	    {noreply, State};
-	{error, Why} ->
+	{error, File, Why} ->
 	    rtb:halt("Failed to write to ~s: ~s",
-		       [State#state.path, file:format_error(Why)])
+                     [File, file:format_error(Why)])
     end;
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -123,22 +136,115 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-fields(Mod) ->
-    ["timestamp"|[atom_to_list(A) || {A, _} <- Mod:stats()]].
-
-header(Mod) ->
-    [string:join(["#"|fields(Mod)], " "), io_lib:nl()].
-
 timestamp(TS) ->
     integer_to_list(p1_time_compat:monotonic_time(seconds) - TS).
 
-format_row(TS, Row) ->
-    [string:join(
-       [timestamp(TS)|[integer_to_list(R) || R <- Row]], " "),
-     io_lib:nl()].
+write_row(TS, Int, File, Fd) ->
+    Row = [timestamp(TS), " ", integer_to_list(Int), io_lib:nl()],
+    case file:write(Fd, Row) of
+        {error, Why} -> {error, File, Why};
+        ok -> ok
+    end.
 
-log(#state{fd = Fd, mod = Mod, time = TS}) ->
-    Row = lists:map(
-	    fun({Counter, F}) -> F(Counter)
-	    end, Mod:stats()),
-    file:write(Fd, format_row(TS, Row)).
+write_hist(Name, File, Fd) ->
+    {Hist, Sum} = lists:mapfoldl(
+                    fun({{_, X}, Y}, Acc) ->
+                            {{X, Y}, Acc+Y}
+                    end, 0, ets:match_object(?MODULE, {{Name, '_'}, '_'})),
+    try
+        {ok, _} = file:position(Fd, bof),
+        case lists:foldl(
+               fun({X, Y}, Acc) ->
+                       Percent = Y*100/Sum,
+                       if Percent >= 0.1 ->
+                               Y1 = io_lib:format("~.2f", [Percent]),
+                               Row = [integer_to_list(X), " ", Y1, io_lib:nl()],
+                               ok = file:write(Fd, Row),
+                               true;
+                          true ->
+                               Acc
+                       end
+               end, false, Hist) of
+            true ->
+                ok = file:truncate(Fd);
+            false ->
+                ok
+        end
+    catch _:{badmatch, {error, Why}} ->
+            {error, File, Why}
+    end.
+
+log(#state{time = TS, metrics = Metrics}) ->
+    maps:fold(
+      fun(Name, Val, ok) ->
+              log(TS, Name, Val);
+         (_, _, Err) ->
+              Err
+      end, ok, Metrics).
+
+log(TS, Name, {_, Type, Call, File, Fd}) when Type == gauge; Type == counter ->
+    Val = case Call of
+              undefined -> lookup(Name);
+              _ -> Call()
+          end,
+    write_row(TS, Val, File, Fd);
+log(TS, _Name, {_, rate, {Name, Call}, File, Fd}) ->
+    New = case Call of
+              undefined -> lookup(Name);
+              _ -> Call()
+          end,
+    Old = put(Name, New),
+    Val = case Old of
+              undefined -> 0;
+              _ -> abs(Old - New)
+          end,
+    write_row(TS, Val, File, Fd);
+log(_, _, {_, _, _, _, _}) ->
+    ok.
+
+init_metrics(Mod, Dir) ->
+    init_metrics(Mod:metrics(), Dir, 1, #{}).
+
+init_metrics([Metric|Metrics], Dir, Pos, Acc) ->
+    #metric{name = Name, type = Type, call = Call, rate = Rate} = Metric,
+    File = filename:join(Dir, Name) ++ ".dat",
+    case init_file(File) of
+        {ok, Fd} ->
+            Acc1 = maps:put(Name, {Pos, Type, Call, File, Fd}, Acc),
+            if Rate andalso Type /= hist ->
+                    RateName = list_to_atom(atom_to_list(Name) ++ "-rate"),
+                    RateFile = filename:join(Dir, RateName) ++ ".dat",
+                    case init_file(RateFile) of
+                        {ok, RateFd} ->
+                            Acc2 = maps:put(
+                                     RateName,
+                                     {Pos+1, rate, {Name, Call}, RateFile, RateFd},
+                                     Acc1),
+                            init_metrics(Metrics, Dir, Pos+2, Acc2);
+                        error ->
+                            error
+                    end;
+               true ->
+                    init_metrics(Metrics, Dir, Pos+1, Acc1)
+            end;
+        error ->
+            error
+    end;
+init_metrics([], _, _, Acc) ->
+    {ok, Acc}.
+
+init_file(File) ->
+    case file:open(File, [write, raw]) of
+        {ok, Fd} ->
+            case file:write(Fd, ["0 0", io_lib:nl()]) of
+                ok -> {ok, Fd};
+                {error, Why} ->
+                    lager:critical("Failed to write to ~s: ~s",
+                                   [File, file:format_error(Why)]),
+                    error
+            end;
+        {error, Why} ->
+            lager:critical("Failed to open ~s for writing: ~s",
+                           [File, file:format_error(Why)]),
+            error
+    end.

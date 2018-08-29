@@ -210,11 +210,11 @@ servers:
   The default is empty list: in this case a binding address will be chosen
   automatically by the OS.
 
-- **stats_file**: `string()`
+- **stats_dir**: `string()`
 
-  A path to the file where statistics will be dumped. The file is used
-  by `gnuplot` to generate statistics graphs. The default value is
-  `log/stats.log`
+  A path to the directory where statistics data will be stored.
+  The files in the directory are used by `gnuplot` to generate statistics graphs.
+  The default value is `stats`.
 
 - **www_dir**: `string()`
 
@@ -236,7 +236,7 @@ bind:
   - 192.168.1.1
   - 192.168.1.2
   - 192.168.1.3
-stats_file: /tmp/rtb/stats.log
+stats_dir: /tmp/rtb/stats
 www_dir: /tmp/rtb/www
 www_port: 1234
 gnuplot: /opt/bin/gnuplot

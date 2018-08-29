@@ -401,8 +401,16 @@ prep_option(servers, List) ->
 prep_option(bind, List) ->
     AvailAddrs = getifaddrs(),
     {bind, prep_addresses(List, AvailAddrs)};
-prep_option(stats_file, Path) ->
-    {stats_file, binary_to_list(Path)};
+prep_option(stats_dir, Path) ->
+    Dir = binary_to_list(Path),
+    case filelib:ensure_dir(filename:join(Dir, "foo")) of
+        ok ->
+            {stats_dir, Dir};
+        {error, Why} ->
+	    lager:error("Failed to create directory ~s: ~s",
+			[Dir, file:format_error(Why)]),
+	    erlang:error(badarg)
+    end;
 prep_option(oom_killer, B) ->
     {oom_killer, to_bool(B)};
 prep_option(oom_watermark, I) when is_integer(I), I>0, I<100 ->
@@ -463,7 +471,7 @@ options() ->
     [{bind, []},
      {servers, []},
      {certfile, undefined},
-     {stats_file, filename:join(<<"log">>, <<"stats.log">>)},
+     {stats_dir, <<"stats">>},
      {oom_killer, true},
      {oom_watermark, 80},
      {www_dir, <<"www">>},

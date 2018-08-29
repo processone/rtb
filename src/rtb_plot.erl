@@ -19,61 +19,48 @@
 -compile([{parse_transform, lager_transform}]).
 
 %% API
--export([render/1]).
+-export([render/2]).
 
 %%%===================================================================
 %%% API
 %%%===================================================================
-render(Field) ->
-    Mod = rtb_config:get_option(module),
-    Path = rtb_config:get_option(stats_file),
+render(Name, Type) ->
     OutDir = rtb_http:docroot(),
-    Fields = [atom_to_list(F) || {F, _} <- Mod:stats()],
-    Position = position(Field, Fields),
-    render(Field, Path, OutDir, Position),
-    render_rate(Field, Path, OutDir, Position).
+    StatsDir = rtb_config:get_option(stats_dir),
+    DataFile = filename:join(StatsDir, Name ++ ".dat"),
+    do_render(Name, DataFile, OutDir, Type).
 
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-render(Field, Path, Dir, N) ->
-    OutFile = filename:join(Dir, Field ++ ".png"),
-    Pos = integer_to_list(N),
+do_render(Name, DataFile, Dir, Type) ->
+    OutFile = filename:join(Dir, Name ++ ".png"),
     Gnuplot = rtb_config:get_option(gnuplot),
-    Cmds = ["set title '" ++ Field ++ "'",
-	    "set grid",
-	    "set style line 1 linecolor rgb '#0060ad' linetype 1",
+    Cmds = ["set title '" ++ Name ++ "'"] ++
+            xlabel(Type) ++ ylabel(Type) ++
+           ["set grid",
+            "set boxwidth 0.9",
+	    "set style " ++ style(Type),
 	    "set terminal png small size 400,300",
 	    "set output '" ++ OutFile ++ "'",
-	    "plot '" ++ Path ++ "' using 1:" ++ Pos ++
-		" with lines linestyle 1 notitle"],
-    os:cmd(Gnuplot ++ " -e \"" ++ string:join(Cmds, "; ") ++ "\""),
-    ok.
+	    "plot '" ++ DataFile ++ "' using 1:2 with " ++ with(Type) ++ " notitle"],
+    Ret = os:cmd(Gnuplot ++ " -e \"" ++ string:join(Cmds, "; ") ++ "\""),
+    check_ret(Name, Ret).
 
-render_rate(Field, Path, Dir, N) ->
-    OutFile = filename:join(Dir, Field ++ "-rate.png"),
-    Pos = integer_to_list(N),
-    Gnuplot = rtb_config:get_option(gnuplot),
-    Cmds = ["set title '" ++ Field ++ "-rate'",
-	    "set grid",
-            "delta_v(time, val) = (delta_val = (prev_val == 0) ? 0 : abs(val - prev_val),"
-            "                      delta_time = (prev_time == 0) ? 1: time - prev_time, "
-            "                      delta = delta_val/delta_time, "
-            "                      prev_time = time, prev_val = val, delta)",
-            "prev_time = 0",
-            "prev_val = 0",
-	    "set style line 1 linecolor rgb '#0060ad' linetype 1",
-	    "set terminal png small size 400,300",
-	    "set output '" ++ OutFile ++ "'",
-	    "plot '" ++ Path ++ "' using 1:(delta_v(\\$1, \\$" ++ Pos ++
-		")) with lines linestyle 1 notitle"],
-    os:cmd(Gnuplot ++ " -e \"" ++ string:join(Cmds, "; ") ++ "\""),
-    ok.
+style(hist) -> "fill solid 0.5";
+style(_) -> "line 1 linecolor rgb '#0060ad' linetype 1".
 
-position(X, L) ->
-    position(X, L, 2).
+with(hist) -> "boxes";
+with(_) -> "lines linestyle 1".
+    
+ylabel(hist) -> ["set ylabel '%' rotate by 0"];
+ylabel(rate) -> ["set ylabel 'number/sec'"];
+ylabel(_) -> ["set ylabel 'number'"].
 
-position(X, [X|_], N) ->
-    N;
-position(X, [_|T], N) ->
-    position(X, T, N+1).
+xlabel(hist) -> ["set xlabel 'round trip time (milliseconds)'"];
+xlabel(_) -> ["set xlabel 'benchmark duration (seconds)'"].
+
+check_ret(_, "") -> ok;
+check_ret(_, "Warning:" ++ _) -> ok;
+check_ret(Name, Err) ->
+    lager:error("Failed to render '~s' graph:~n~s", [Name, Err]).

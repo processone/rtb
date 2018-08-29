@@ -26,6 +26,8 @@
 -export([random_server/0, format_list/1, replace/2, cancel_timer/1,
 	 make_pattern/1, set_debug/0]).
 
+-include("rtb.hrl").
+
 -callback load() -> ok | {error, any()}.
 -callback start(pos_integer(),
 		[gen_tcp:option()],
@@ -34,7 +36,7 @@
     {ok, pid()} | {error, any()} | ignore.
 -callback options() -> [{atom(), any()} | atom()].
 -callback prep_option(atom(), any()) -> {atom(), any()}.
--callback stats() -> [{atom(), integer()}].
+-callback metrics() -> [{atom(), metric()}].
 
 -type server() :: inet:hostname() | inet:ip_address().
 -type endpoint() :: {server(), inet:port_number(), boolean()}.

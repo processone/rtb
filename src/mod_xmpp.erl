@@ -21,7 +21,7 @@
 -behaviour(rtb).
 
 %% rtb API
--export([load/0, start/4, options/0, prep_option/2, stats/0]).
+-export([load/0, start/4, options/0, prep_option/2, metrics/0]).
 %% xmpp_stream_out callbacks
 -export([tls_options/1, tls_required/1, tls_verify/1, tls_enabled/1]).
 -export([sasl_mechanisms/1, handle_stream_end/2, resolve/2,
@@ -47,6 +47,7 @@
 -export([send_message/1, send_presence/1, disconnect/1, upload_file/1,
 	 proxy65_send_file/1]).
 
+-include("rtb.hrl").
 -include("xmpp.hrl").
 
 -type state() :: #{}.
@@ -98,15 +99,27 @@ options() ->
      jid,
      password].
 
-stats() ->
-    [{'c2s-sessions', fun rtb_stats:lookup/1},
-     {'c2s-session-errors', fun rtb_stats:lookup/1},
-     {'message-out', fun rtb_stats:lookup/1},
-     {'message-in', fun rtb_stats:lookup/1},
-     {'presence-out', fun rtb_stats:lookup/1},
-     {'presence-in', fun rtb_stats:lookup/1},
-     {'iq-out', fun rtb_stats:lookup/1},
-     {'iq-in', fun rtb_stats:lookup/1}].
+metrics() ->
+    [#metric{name = sessions, call = fun rtb_sm:size/0},
+     #metric{name = errors},
+     #metric{name = 'message-out'},
+     #metric{name = 'message-in'},
+     #metric{name = 'presence-out'},
+     #metric{name = 'presence-in'},
+     #metric{name = 'iq-out'},
+     #metric{name = 'iq-in'},
+     #metric{name = 'roster-get-rtt', type = hist},
+     #metric{name = 'carbons-enable-rtt', type = hist},
+     #metric{name = 'disco-info-rtt', type = hist},
+     #metric{name = 'disco-items-rtt', type = hist},
+     #metric{name = 'mam-prefs-set-rtt', type = hist},
+     #metric{name = 'mam-query-rtt', type = hist},
+     #metric{name = 'private-get-rtt', type = hist},
+     #metric{name = 'block-list-get-rtt', type = hist},
+     #metric{name = 'proxy65-activate-rtt', type = hist},
+     #metric{name = 'proxy65-get-rtt', type = hist},
+     #metric{name = 'proxy65-set-rtt', type = hist},
+     #metric{name = 'upload-request-rtt', type = hist}].
 
 prep_option(jid, J) when is_binary(J) ->
     {jid, prep_jid(J)};
@@ -310,8 +323,8 @@ handle_packet(#sm_resumed{}, State) ->
     xmpp_stream_out:establish(State1#{mgmt_resumed => true});
 handle_packet(#sm_failed{} = Err, #{stream_features := Features} = State) ->
     Txt = <<"Resumption failed: ", (format_error(Err))/binary>>,
-    rtb_stats:incr('c2s-session-errors'),
-    rtb_stats:incr({'c2s-error-reason', Txt}),
+    rtb_stats:incr('errors'),
+    rtb_stats:incr({'error-reason', Txt}),
     State1 = reset_state(State),
     xmpp_stream_out:bind(State1, Features);
 handle_packet(#sm_failed{} = Err, State) ->
@@ -338,8 +351,8 @@ handle_stream_end(Reason, State) ->
 				error -> {Reason, State};
 				Other -> Other
 			    end,
-	    rtb_stats:incr('c2s-session-errors'),
-	    rtb_stats:incr({'c2s-error-reason', format_error(Err)}),
+	    rtb_stats:incr('errors'),
+	    rtb_stats:incr({'error-reason', format_error(Err)}),
 	    lager:debug("~s terminated: ~s; reconnecting...",
 			[format_me(State1), format_error(Err)]),
 	    State2 = reset_state(State1),
@@ -385,8 +398,8 @@ terminate(_Reason, #{conn_id := I, action := Action} = State) ->
     unregister(I, Action),
     try maps:get(stop_reason, State) of
 	Reason ->
-	    rtb_stats:incr('c2s-session-errors'),
-	    rtb_stats:incr({'c2s-error-reason', format_error(Reason)}),
+	    rtb_stats:incr('errors'),
+	    rtb_stats:incr({'error-reason', format_error(Reason)}),
 	    lager:debug("~s terminated: ~s",
 			[format_me(State), format_error(Reason)])
     catch _:{badkey, _} ->
@@ -406,12 +419,12 @@ handle_iq(#iq{type = T, id = ID} = IQ,
     case maps:take(ID, Reqs) of
 	{{Callback, SendTime}, Reqs1} ->
 	    State1 = State#{iq_requests => Reqs1},
-	    Delay = current_time() - SendTime,
+	    RTT = current_time() - SendTime,
 	    State2 = case Callback of
 			 {Mod, Fun, Args} ->
-			     apply(Mod, Fun, [State1, IQ, Delay|Args]);
+			     apply(Mod, Fun, [State1, IQ, RTT|Args]);
 			 Fun ->
-			     ?MODULE:Fun(State1, IQ, Delay)
+			     ?MODULE:Fun(State1, IQ, RTT)
 		     end,
 	    case maps:size(Reqs1) of
 		0 when Action /= send ->
@@ -470,8 +483,8 @@ handle_presence(_, State) ->
 %%% IQ callbacks
 %%%===================================================================
 disco_info_callback(#{lang := Lang, server := Server} = State,
-		    #iq{type = result, from = From} = IQRes, Delay) ->
-    rtb_stats:incr({'disco-info-delay', Delay}),
+		    #iq{type = result, from = From} = IQRes, RTT) ->
+    rtb_stats:incr({'disco-info-rtt', RTT}),
     try xmpp:try_subtag(IQRes, #disco_info{}) of
 	#disco_info{features = Fs} = Info ->
 	    case From#jid.lserver of
@@ -493,7 +506,8 @@ disco_info_callback(#{lang := Lang, server := Server} = State,
 	    Txt = xmpp:io_format_error(Why),
 	    send_pkt(State, xmpp:serr_invalid_xml(Txt, Lang))
     end;
-disco_info_callback(State, IQ, _) ->
+disco_info_callback(State, IQ, RTT) ->
+    rtb_stats:incr({'disco-info-rtt', RTT}),
     case xmpp:get_error(IQ) of
 	#stanza_error{reason = R} when R == 'service-unavailable';
 				       R == 'feature-not-implemented' ->
@@ -503,8 +517,8 @@ disco_info_callback(State, IQ, _) ->
     end.
 
 disco_items_callback(#{lang := Lang} = State,
-		     #iq{type = result, from = From} = IQRes, Delay) ->
-    rtb_stats:incr({'disco-items-delay', Delay}),
+		     #iq{type = result, from = From} = IQRes, RTT) ->
+    rtb_stats:incr({'disco-items-rtt', RTT}),
     try xmpp:try_subtag(IQRes, #disco_items{}) of
 	#disco_items{items = Items} ->
 	    lists:foldl(
@@ -522,7 +536,8 @@ disco_items_callback(#{lang := Lang} = State,
 	    Txt = xmpp:io_format_error(Why),
 	    send_pkt(State, xmpp:serr_invalid_xml(Txt, Lang))
     end;
-disco_items_callback(State, IQ, _) ->
+disco_items_callback(State, IQ, RTT) ->
+    rtb_stats:incr({'disco-items-rtt', RTT}),
     case xmpp:get_error(IQ) of
 	#stanza_error{reason = R} when R == 'service-unavailable';
 				       R == 'feature-not-implemented' ->
@@ -531,45 +546,51 @@ disco_items_callback(State, IQ, _) ->
 	    fail_iq_error(State, IQ, "Failed to request disco#items from ~s")
     end.
 
-carbons_set_callback(State, #iq{type = result}, Delay) ->
-    rtb_stats:incr({'carbons-enable-delay', Delay}),
+carbons_set_callback(State, #iq{type = result}, RTT) ->
+    rtb_stats:incr({'carbons-enable-rtt', RTT}),
     State;
-carbons_set_callback(State, IQ, _) ->
+carbons_set_callback(State, IQ, RTT) ->
+    rtb_stats:incr({'carbons-enable-rtt', RTT}),
     fail_iq_error(State, IQ, "Failed to enable carbons for ~s").
 
-blocklist_get_callback(State, #iq{type = result}, Delay) ->
-    rtb_stats:incr({'block-list-get-delay', Delay}),
+blocklist_get_callback(State, #iq{type = result}, RTT) ->
+    rtb_stats:incr({'block-list-get-rtt', RTT}),
     State;
-blocklist_get_callback(State, IQ, _) ->
+blocklist_get_callback(State, IQ, RTT) ->
+    rtb_stats:incr({'block-list-get-rtt', RTT}),
     fail_iq_error(State, IQ, "Failed to request blocklist for ~s").
 
-private_get_callback(State, #iq{type = result}, Delay) ->
-    rtb_stats:incr({'private-get-delay', Delay}),
+private_get_callback(State, #iq{type = result}, RTT) ->
+    rtb_stats:incr({'private-get-rtt', RTT}),
     State;
-private_get_callback(State, IQ, _) ->
+private_get_callback(State, IQ, RTT) ->
+    rtb_stats:incr({'private-get-rtt', RTT}),
     fail_iq_error(State, IQ, "Failed to get bookmarks from private storage for ~s").
 
-roster_get_callback(State, #iq{type = result}, Delay) ->
-    rtb_stats:incr({'roster-get-delay', Delay}),
+roster_get_callback(State, #iq{type = result}, RTT) ->
+    rtb_stats:incr({'roster-get-rtt', RTT}),
     State;
-roster_get_callback(State, IQ, _) ->
+roster_get_callback(State, IQ, RTT) ->
+    rtb_stats:incr({'roster-get-rtt', RTT}),
     fail_iq_error(State, IQ, "Failed to request roster for ~s").
 
-mam_prefs_set_callback(State, #iq{type = result}, Delay) ->
-    rtb_stats:incr({'mam-prefs-set-delay', Delay}),
+mam_prefs_set_callback(State, #iq{type = result}, RTT) ->
+    rtb_stats:incr({'mam-prefs-set-rtt', RTT}),
     State;
-mam_prefs_set_callback(State, IQ, _) ->
+mam_prefs_set_callback(State, IQ, RTT) ->
+    rtb_stats:incr({'mam-prefs-set-rtt', RTT}),
     fail_iq_error(State, IQ, "Failed to set MAM preferences for ~s").
 
-mam_query_callback(State, #iq{type = result}, Delay) ->
-    rtb_stats:incr({'mam-query-delay', Delay}),
+mam_query_callback(State, #iq{type = result}, RTT) ->
+    rtb_stats:incr({'mam-query-rtt', RTT}),
     State;
-mam_query_callback(State, IQ, _) ->
+mam_query_callback(State, IQ, RTT) ->
+    rtb_stats:incr({'mam-query-rtt', RTT}),
     fail_iq_error(State, IQ, "Failed to query MAM archive for ~s").
 
 upload_request_callback(#{lang := Lang} = State,
-			#iq{type = result, from = From} = IQRes, Delay, Size) ->
-    rtb_stats:incr({'upload-request-delay', Delay}),
+			#iq{type = result, from = From} = IQRes, RTT, Size) ->
+    rtb_stats:incr({'upload-request-rtt', RTT}),
     try xmpp:try_subtag(IQRes, #upload_slot_0{xmlns = ?NS_HTTP_UPLOAD_0}) of
 	#upload_slot_0{get = GetURL, put = PutURL} ->
 	    perform_http_upload(State, Size, GetURL, PutURL);
@@ -582,12 +603,13 @@ upload_request_callback(#{lang := Lang} = State,
 	    Txt = xmpp:io_format_error(Why),
 	    send_pkt(State, xmpp:serr_invalid_xml(Txt, Lang))
     end;
-upload_request_callback(State, IQ, _, _) ->
+upload_request_callback(State, IQ, RTT, _) ->
+    rtb_stats:incr({'upload-request-rtt', RTT}),
     fail_iq_error(State, IQ, "Failed to request an HTTP Upload slot from ~s").
 
 proxy65_get_callback(#{lang := Lang} = State,
-		     #iq{type = result, from = From} = IQRes, Delay) ->
-    rtb_stats:incr({'proxy65-get-delay', Delay}),
+		     #iq{type = result, from = From} = IQRes, RTT) ->
+    rtb_stats:incr({'proxy65-get-rtt', RTT}),
     try xmpp:try_subtag(IQRes, #bytestreams{}) of
 	#bytestreams{hosts = []} ->
 	    Txt = io_lib:format("Invalid bytestreams response from ~s: "
@@ -617,13 +639,14 @@ proxy65_get_callback(#{lang := Lang} = State,
 	    Txt = xmpp:io_format_error(Why),
 	    send_pkt(State, xmpp:serr_invalid_xml(Txt, Lang))
     end;
-proxy65_get_callback(State, IQ, _) ->
+proxy65_get_callback(State, IQ, RTT) ->
+    rtb_stats:incr({'proxy65-get-rtt', RTT}),
     fail_iq_error(State, IQ, "Failed to request proxy65 streamhosts from ~s").
 
 proxy65_set_callback(#{jid := JID, conn_options := ConnOpts} = State,
 		     #iq{type = result, from = From, lang = Lang} = IQRes,
-		     Delay, Size, SID, StreamHosts) ->
-    rtb_stats:incr({'proxy65-set-delay', Delay}),
+		     RTT, Size, SID, StreamHosts) ->
+    rtb_stats:incr({'proxy65-set-rtt', RTT}),
     try xmpp:try_subtag(IQRes, #bytestreams{}) of
 	#bytestreams{sid = SID, used = Used} ->
 	    Hash = p1_sha:sha([SID, jid:encode(JID), jid:encode(From)]),
@@ -662,14 +685,16 @@ proxy65_set_callback(#{jid := JID, conn_options := ConnOpts} = State,
 	    Txt = xmpp:io_format_error(Why),
 	    send_pkt(State, xmpp:serr_invalid_xml(Txt, Lang))
     end;
-proxy65_set_callback(State, IQ, _, _, _, _) ->
+proxy65_set_callback(State, IQ, RTT, _, _, _) ->
+    rtb_stats:incr({'proxy65-set-rtt', RTT}),
     fail_iq_error(State, IQ, "Failed to set proxy65 streamhosts to ~s").
 
-proxy65_activate_callback(State, #iq{type = result}, Delay, StreamPid) ->
-    rtb_stats:incr({'proxy65-activate-delay', Delay}),
+proxy65_activate_callback(State, #iq{type = result}, RTT, StreamPid) ->
+    rtb_stats:incr({'proxy65-activate-rtt', RTT}),
     mod_xmpp_proxy65:activate(StreamPid),
     State;
-proxy65_activate_callback(State, IQ, _, _) ->
+proxy65_activate_callback(State, IQ, RTT, _) ->
+    rtb_stats:incr({'proxy65-activate-rtt', RTT}),
     fail_iq_error(State, IQ, "Failed to activate proxy65 bytestream at ~s").
 
 %%%===================================================================
@@ -843,13 +868,9 @@ reset_state(State) ->
     State2 = cancel_timers(State1),
     State2#{iq_requests => #{}}.
 
-unregister(I, Action) ->
+unregister(I, _Action) ->
     rtb_sm:unregister(I),
-    rtb_pool:unregister(self()),
-    case Action of
-	send -> rtb_stats:decr('c2s-sessions');
-	_ -> ok
-    end.
+    rtb_pool:unregister(self()).
 
 reconnect_after(#{action := Action, conn_id := I} = State, Timeout) ->
     unregister(I, Action),
@@ -865,7 +886,6 @@ reconnect_after(#{action := Action, conn_id := I} = State, Timeout) ->
 session_established(#{user := U, server := S,
 		      resource := R, conn_id := I} = State) ->
     rtb_sm:register(I, self(), {U, S, R}),
-    rtb_stats:incr('c2s-sessions'),
     State1 = State#{action => send, just_started => false},
     State2 = maps:remove(reconnect_after, State1),
     State3 = xmpp_stream_out:set_timeout(State2, infinity),
@@ -982,8 +1002,8 @@ fail(#{action := Action} = State, Reason) ->
     Txt = iolist_to_binary(Reason),
     case Action of
 	send ->
-	    rtb_stats:incr('c2s-errors'),
-	    rtb_stats:incr({'c2s-error-reason', Txt}),
+	    rtb_stats:incr('errors'),
+	    rtb_stats:incr({'error-reason', Txt}),
 	    State;
 	_ ->
 	    State1 = State#{stop_reason => Txt},

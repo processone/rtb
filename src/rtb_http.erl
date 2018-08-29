@@ -51,15 +51,13 @@ do(#mod{method = Method, data = Data}) ->
     if Method == "GET"; Method == "HEAD" ->
 	    case lists:keyfind(real_name, 1, Data) of
 		{real_name, {Path, _}} ->
-		    Field = filename:basename(Path, ".png"),
-		    Mod = rtb_config:get_option(module),
-		    try lists:keymember(
-			  list_to_existing_atom(Field), 1, Mod:stats()) of
-			true ->
-			    rtb_plot:render(Field);
-			false ->
-			    ok
-		    catch _:_ ->
+		    Name = filename:basename(Path, ".png"),
+		    try rtb_stats:get_type(list_to_existing_atom(Name)) of
+                        undefined ->
+                            ok;
+                        Type ->
+			    rtb_plot:render(Name, Type)
+		    catch _:badarg ->
 			    ok
 		    end;
 		false ->
@@ -88,13 +86,11 @@ httpd_options() ->
      {server_name, Domain}].
 
 create_index_html(DocRoot) ->
-    Mod = rtb_config:get_option(module),
     Data = ["<!DOCTYPE html><html><body>",
 	    lists:map(
-	      fun({F, _}) ->
-		      ["<img src='/", atom_to_list(F), ".png'>",
-                       "<img src='/", atom_to_list(F), "-rate.png'>"]
-	      end, Mod:stats()),
+	      fun(Name) ->
+		      ["<img src='/", atom_to_list(Name), ".png'>"]
+	      end, rtb_stats:get_metrics()),
 	    "</body></html>"],
     File = filename:join(DocRoot, "index.html"),
     case filelib:ensure_dir(File) of

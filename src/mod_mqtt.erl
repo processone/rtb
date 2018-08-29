@@ -21,7 +21,7 @@
 -behaviour(rtb).
 
 %% API
--export([load/0, start/4, options/0, prep_option/2, stats/0]).
+-export([load/0, start/4, options/0, prep_option/2, metrics/0]).
 %% p1_fsm callbacks
 -export([init/1, handle_event/3, handle_sync_event/4, handle_info/3,
 	 terminate/3, code_change/4]).
@@ -33,6 +33,7 @@
 %% Scheduled actions
 -export([disconnect/2, publish/2]).
 
+-include("rtb.hrl").
 -include("mqtt.hrl").
 -include_lib("kernel/include/inet.hrl").
 
@@ -180,14 +181,20 @@ prep_option(track_publish_delivery, Val) ->
              false
      end}.
 
-stats() ->
-    [{'sessions', fun(_) -> rtb_sm:size() end},
-     {'connections', fun rtb_stats:lookup/1},
-     {'publish-in', fun rtb_stats:lookup/1},
-     {'publish-out', fun rtb_stats:lookup/1},
-     {'queued', fun rtb_stats:lookup/1},
-     {'publish-loss', fun(_) -> ets:info(rtb_tracker, size) end},
-     {'errors', fun rtb_stats:lookup/1}].
+metrics() ->
+    [#metric{name = sessions, call = fun rtb_sm:size/0},
+     #metric{name = connections},
+     #metric{name = 'publish-in'},
+     #metric{name = 'publish-out'},
+     #metric{name = 'queued'},
+     #metric{name = 'publish-loss',
+             call = fun() -> ets:info(rtb_tracker, size) end},
+     #metric{name = errors},
+     #metric{name = 'connect-rtt', type = hist},
+     #metric{name = 'login-rtt', type = hist},
+     #metric{name = 'subscribe-rtt', type = hist},
+     #metric{name = 'publish-rtt', type = hist},
+     #metric{name = 'ping-rtt', type = hist}].
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -271,7 +278,8 @@ session_established(Event, From, State) ->
     handle_sync_event(Event, From, session_established, State).
 
 disconnected(timeout, State) ->
-    State1 = State#state{stop_reason = undefined},
+    KeepAlive = rtb_config:get_option(keep_alive),
+    State1 = State#state{stop_reason = undefined, keep_alive = KeepAlive},
     State2 = reset_keep_alive(State1),
     connecting(connect, State2);
 disconnected(Event, State) ->
@@ -346,6 +354,8 @@ handle_packet(#disconnect{} = Pkt, _StateName,
     Reason = maps:get(reason_string, Pkt#disconnect.properties, <<>>),
     {error, State, {disconnected, Pkt#disconnect.code, Reason}};
 handle_packet(#connack{} = Pkt, waiting_for_connack, State) ->
+    StartTime = State#state.timeout - timer:seconds(State#state.keep_alive),
+    rtb_stats:incr({'login-rtt', current_time() - StartTime}),
     case Pkt#connack.code of
 	success ->
             CleanSession = rtb_config:get_option(clean_session),
@@ -801,7 +811,7 @@ set_timeout(State, infinity) ->
 set_timeout(State, Timeout) ->
     State#state{timeout = current_time() + Timeout}.
 
--spec current_time() -> integer().
+-spec current_time() -> milli_seconds().
 current_time() ->
     p1_time_compat:monotonic_time(milli_seconds).
 
@@ -1007,10 +1017,13 @@ disconnect_reason_code(_) -> 'unspecified-error'.
 %%%===================================================================
 connect(#state{conn_addrs = Addrs, conn_opts = Opts,
 	       timeout = Time} = State) ->
+    StartTime = current_time(),
     case lookup(Addrs, Time) of
 	{ok, Addrs1} ->
 	    case connect(Addrs1, Opts, Time) of
 		{ok, Sock} ->
+                    RTT = current_time() - StartTime,
+                    rtb_stats:incr({'connect-rtt', RTT}),
 		    {ok, State#state{socket = Sock}};
 		Why ->
 		    {error, Why}
