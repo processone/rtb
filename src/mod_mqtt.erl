@@ -184,17 +184,24 @@ prep_option(track_publish_delivery, Val) ->
 metrics() ->
     [#metric{name = sessions, call = fun rtb_sm:size/0},
      #metric{name = connections},
+     #metric{name = 'packets-in'},
+     #metric{name = 'packets-out'},
      #metric{name = 'publish-in'},
      #metric{name = 'publish-out'},
      #metric{name = 'queued', rate = false},
-     #metric{name = 'publish-loss', rate = false,
-             call = fun() -> ets:info(rtb_tracker, size) end},
-     #metric{name = errors},
      #metric{name = 'connect-rtt', type = hist},
      #metric{name = 'auth-rtt', type = hist},
      #metric{name = 'subscribe-rtt', type = hist},
      #metric{name = 'publish-rtt', type = hist},
-     #metric{name = 'ping-rtt', type = hist}].
+     #metric{name = 'ping-rtt', type = hist},
+     #metric{name = errors}|
+     case rtb_config:get_option(track_publish_delivery) of
+         true ->
+             [#metric{name = 'publish-loss', rate = false,
+                      call = fun() -> ets:info(rtb_tracker, size) end}];
+         false ->
+             []
+     end].
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -304,6 +311,7 @@ handle_info({tcp, TCPSock, TCPData}, StateName,
 	    case mqtt_codec:decode(Codec, Data) of
 		{ok, Pkt, Codec1} ->
 		    lager:debug("Got MQTT packet:~n~s", [pp(Pkt)]),
+                    rtb_stats:incr('packets-in'),
 		    State1 = State#state{codec = Codec1},
 		    case handle_packet(Pkt, StateName, State1) of
 			{ok, State2} ->
@@ -675,6 +683,7 @@ send(#state{socket = {SockMod, Sock} = Socket} = State, Pkt) ->
            end,
     lager:debug("Send MQTT packet:~n~s", [pp(Pkt1)]),
     Data = mqtt_codec:encode(State#state.version, Pkt1),
+    rtb_stats:incr('packets-out'),
     Res = SockMod:send(Sock, Data),
     check_sock_result(Socket, Res),
     reset_keep_alive(State);
