@@ -1,5 +1,7 @@
 RTB: Benchmarking tool to stress real-time protocols
 ====================================================
+![line-plot](https://raw.github.com/processone/rtb/master/img/packets-in-rate.png)
+![box-plot](https://raw.github.com/processone/rtb/master/img/ping-rtt.png)
 
 The idea of RTB is to provide a benchmarking tool to stress test
 XMPP and MQTT servers with the minimum configuration overhead.
