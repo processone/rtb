@@ -19,7 +19,7 @@
 -compile([{parse_transform, lager_transform}]).
 
 %% API
--export([start_link/0, docroot/0, do/1]).
+-export([start_link/0, docroot/0, do/1, response_default_headers/0]).
 
 -include_lib("inets/include/httpd.hrl").
 
@@ -73,6 +73,9 @@ do(#mod{method = Method, data = Data}) ->
     end,
     {proceed, Data}.
 
+response_default_headers() ->
+    [{"Cache-Control", "no-cache"}].
+
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
@@ -89,6 +92,7 @@ httpd_options() ->
      {directory_index, ["index.html"]},
      {modules, [mod_alias, ?MODULE, mod_get, mod_head]},
      {script_nocache, true},
+     {customize, ?MODULE},
      {server_name, Domain}].
 
 create_index_html(DocRoot) ->
@@ -117,13 +121,18 @@ create_index_html(DocRoot) ->
     end.
 
 script() ->
-    %% Reload all images every 5 seconds
+    case rtb_config:get_option(www_refresh) of
+        0 -> "";
+        N -> script(timer:seconds(N))
+    end.
+
+script(Timeout) ->
     "setInterval(function() {
       var images = document.images;
       for (var i=0; i<images.length; i++) {
           images[i].src = images[i].src.replace(/\\btime=[^&]*/, 'time=' + new Date().getTime());
       }
-     }, 5000);".
+     }, " ++ integer_to_list(Timeout) ++ ");".
 
 log_error({{shutdown, _} = Err, _}, Port) ->
     log_error(Err, Port);

@@ -429,6 +429,8 @@ prep_option(www_port, P) when is_integer(P), P>0, P<65536 ->
     {www_port, P};
 prep_option(www_domain, <<_, _/binary>> = D) ->
     {www_domain, binary_to_list(D)};
+prep_option(www_refresh, I) when is_integer(I), I>=0 ->
+    {www_refresh, I};
 prep_option(gnuplot, undefined) ->
     Exec = case os:find_executable("gnuplot") of
                false -> "gnuplot";
@@ -477,6 +479,7 @@ options() ->
      {www_dir, <<"www">>},
      {www_port, 8080},
      {www_domain, <<"localhost">>},
+     {www_refresh, 1},
      {gnuplot, undefined},
      {debug, false},
      %% Required options
