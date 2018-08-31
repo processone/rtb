@@ -62,7 +62,10 @@ For Debian based distros to install all the dependencies run:
 # apt install gcc make libexpat1-dev libyaml-dev libssl1.0-dev \
               zlib1g-dev gnuplot-nox erlang-nox erlang-dev
 ```
-
+For Arch Linux:
+```
+# pacman -S expat libyaml erlang-nox gnuplot
+```
 For other Linux distros, *BSD and OSX:
 
 **TODO**: Please create an issue/PR if you know the sequence of packages to install.
