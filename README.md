@@ -246,6 +246,12 @@ servers:
   The path to a gnuplot execution binary. By default RTB is trying to detect
   the location of gnuplot automatically.
 
+- **debug**: `true | false`
+
+  Whether to log debug messages or not. This is only needed to track down
+  issues of the server or the tool itself. **DON'T** enable in large scale benchmarking.
+  The default is `false`.
+
 Example:
 ```yaml
 bind:
