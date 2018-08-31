@@ -182,26 +182,36 @@ prep_option(track_publish_delivery, Val) ->
      end}.
 
 metrics() ->
-    [#metric{name = sessions, call = fun rtb_sm:size/0},
-     #metric{name = connections},
-     #metric{name = 'packets-in'},
-     #metric{name = 'packets-out'},
-     #metric{name = 'publish-in'},
-     #metric{name = 'publish-out'},
-     #metric{name = 'queued', rate = false},
-     #metric{name = 'connect-rtt', type = hist},
-     #metric{name = 'auth-rtt', type = hist},
-     #metric{name = 'subscribe-rtt', type = hist},
-     #metric{name = 'publish-rtt', type = hist},
-     #metric{name = 'ping-rtt', type = hist},
-     #metric{name = errors}|
-     case rtb_config:get_option(track_publish_delivery) of
-         true ->
-             [#metric{name = 'publish-loss', rate = false,
-                      call = fun() -> ets:info(rtb_tracker, size) end}];
-         false ->
-             []
-     end].
+    lists:filter(
+      fun(#metric{name = Name}) ->
+              if Name == 'publish-in'; Name == 'publish-out';
+                 Name == 'publish-rtt' ->
+                      rtb_config:get_option(publish_interval) /= false
+                          andalso rtb_config:get_option(publish) /= [];
+                 Name == 'subscribe-rtt' ->
+                      rtb_config:get_option(subscribe) /= [];
+                 Name == 'publish-loss' ->
+                      rtb_config:get_option(publish_interval) /= false
+                          andalso rtb_config:get_option(publish) /= []
+                          andalso rtb_config:get_option(track_publish_delivery);
+                 true ->
+                      true
+              end
+      end, [#metric{name = sessions, call = fun rtb_sm:size/0},
+            #metric{name = connections},
+            #metric{name = 'packets-in'},
+            #metric{name = 'packets-out'},
+            #metric{name = 'publish-in'},
+            #metric{name = 'publish-out'},
+            #metric{name = 'queued', rate = false},
+            #metric{name = 'connect-rtt', type = hist},
+            #metric{name = 'auth-rtt', type = hist},
+            #metric{name = 'subscribe-rtt', type = hist},
+            #metric{name = 'publish-rtt', type = hist},
+            #metric{name = 'ping-rtt', type = hist},
+            #metric{name = errors},
+            #metric{name = 'publish-loss', rate = false,
+                    call = fun() -> ets:info(rtb_tracker, size) end}]).
 
 %%%===================================================================
 %%% gen_fsm callbacks

@@ -100,28 +100,46 @@ options() ->
      password].
 
 metrics() ->
-    [#metric{name = sessions, call = fun rtb_sm:size/0},
-     #metric{name = errors},
-     #metric{name = 'message-out'},
-     #metric{name = 'message-in'},
-     #metric{name = 'presence-out'},
-     #metric{name = 'presence-in'},
-     #metric{name = 'iq-out'},
-     #metric{name = 'iq-in'},
-     #metric{name = 'roster-get-rtt', type = hist},
-     #metric{name = 'carbons-enable-rtt', type = hist},
-     #metric{name = 'disco-info-rtt', type = hist},
-     #metric{name = 'disco-items-rtt', type = hist},
-     #metric{name = 'mam-prefs-set-rtt', type = hist},
-     #metric{name = 'mam-query-rtt', type = hist},
-     #metric{name = 'private-get-rtt', type = hist},
-     #metric{name = 'block-list-get-rtt', type = hist},
-     #metric{name = 'proxy65-activate-rtt', type = hist},
-     #metric{name = 'proxy65-get-rtt', type = hist},
-     #metric{name = 'proxy65-set-rtt', type = hist},
-     #metric{name = 'upload-request-rtt', type = hist}].
+    lists:filter(
+      fun(#metric{name = Name}) ->
+              if Name == 'roster-get-rtt' -> rtb_config:get_option(roster);
+                 Name == 'carbons-enable-rtt' -> rtb_config:get_option(carbons);
+                 Name == 'mam-prefs-set-rtt';
+                 Name == 'mam-query-rtt' -> rtb_config:get_option(mam);
+                 Name == 'private-get-rtt' -> rtb_config:get_option(private);
+                 Name == 'block-list-get-rtt' -> rtb_config:get_option(blocklist);
+                 Name == 'proxy65-activate-rtt';
+                 Name == 'proxy65-get-rtt';
+                 Name == 'proxy65-set-rtt' ->
+                      rtb_config:get_option(proxy65_interval) /= false;
+                 Name == 'upload-request-rtt' ->
+                      rtb_config:get_option(http_upload_interval) /= false;
+                 true ->
+                      true
+              end
+      end, [#metric{name = sessions, call = fun rtb_sm:size/0},
+            #metric{name = errors},
+            #metric{name = 'message-out'},
+            #metric{name = 'message-in'},
+            #metric{name = 'presence-out'},
+            #metric{name = 'presence-in'},
+            #metric{name = 'iq-out'},
+            #metric{name = 'iq-in'},
+            #metric{name = 'roster-get-rtt', type = hist},
+            #metric{name = 'carbons-enable-rtt', type = hist},
+            #metric{name = 'disco-info-rtt', type = hist},
+            #metric{name = 'disco-items-rtt', type = hist},
+            #metric{name = 'mam-prefs-set-rtt', type = hist},
+            #metric{name = 'mam-query-rtt', type = hist},
+            #metric{name = 'private-get-rtt', type = hist},
+            #metric{name = 'block-list-get-rtt', type = hist},
+            #metric{name = 'proxy65-activate-rtt', type = hist},
+            #metric{name = 'proxy65-get-rtt', type = hist},
+            #metric{name = 'proxy65-set-rtt', type = hist},
+            #metric{name = 'upload-request-rtt', type = hist}]).
 
 prep_option(jid, J) when is_binary(J) ->
+    xmpp:set_config([{debug, rtb_config:get_option(debug)}]),
     {jid, prep_jid(J)};
 prep_option(password, P) when is_binary(P) ->
     {password, rtb:make_pattern(P)};
@@ -266,7 +284,7 @@ handle_stream_established(#{start_time := StartTime} = State) ->
 	    send_pkt(State1, #sm_enable{xmlns = ?NS_STREAM_MGMT_3,
 					resume = true});
 	false ->
-	    State1
+	    send_iq_requests(State1)
     end.
 
 handle_timeout(#{action := reconnect} = State) ->
@@ -313,10 +331,7 @@ handle_packet(#sm_enabled{max = Max, id = ID}, #{action := connect} = State) ->
 	_ ->
 	    State1 = State#{mgmt_timeout => Max, mgmt_id => ID,
 			    mgmt_stanzas_in => 0},
-	    lists:foldl(
-	      fun({IQ, Callback}, StateAcc) ->
-		      send_iq(StateAcc, IQ, Callback)
-	      end, State1, list_iq_requests(State))
+            send_iq_requests(State1)
     end;
 handle_packet(#sm_resumed{}, State) ->
     State1 = maps:remove(stream_features, State),
@@ -785,6 +800,12 @@ set_to(#{jid := JID}, Pkt) ->
 	_ ->
 	    Pkt
     end.
+
+send_iq_requests(State) ->
+    lists:foldl(
+      fun({IQ, Callback}, StateAcc) ->
+              send_iq(StateAcc, IQ, Callback)
+      end, State, list_iq_requests(State)).
 
 list_iq_requests(#{server := Server}) ->
     ServerJID = jid:make(Server),
