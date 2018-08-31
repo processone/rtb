@@ -45,18 +45,25 @@ stress test [ejabberd SaaS](https://ejabberd-saas.com/) deployments.
 
 To compile RTB you need:
 
- - Unix-like OS. Windows is not supported.
+ - Unix-like OS. Windows is not supported. Only Linux is tested.
  - GNU Make.
  - GCC.
- - Libexpat 1.95 or higher.
- - Libyaml 0.1.4 or higher.
- - Erlang/OTP 18.0 or higher.
- - OpenSSL 1.0.0 or higher.
- - Zlib 1.2.3 or higher.
- - gnuplot 4.4 or higher.
+ - Libexpat ≥ 1.95
+ - Libyaml ≥ 0.1.4
+ - Erlang/OTP ≥ 18.0
+ - OpenSSL ≥ 1.0.0
+ - Zlib ≥ 1.2.3
+ - gnuplot ≥ 4.4
 
-If your system splits packages in libraries and development headers, you must
-install the development packages also.
+For Debian based distros to install all the dependencies run:
+```
+# apt install gcc make libexpat1-dev libyaml-dev libssl1.0-dev \
+              zlib1g-dev gnuplot-nox erlang-nox erlang-dev
+```
+
+For other Linux distros, *BSD and OSX:
+
+**TODO**: Please create an issue/PR if you know the sequence of packages to install.
 
 # Compiling
 
@@ -145,7 +152,7 @@ The majority of parameters are optional.
 
 ## General parameters
 
-These group of parameters are common for all scenarios.
+This group of parameters are common for all scenarios.
 
 ### Mandatory parameters
 
@@ -186,8 +193,12 @@ These group of parameters are common for all scenarios.
   established mechanisms to locate MQTT servers.
 
   For XMPP scenario the default is empty list which means server endpoints
-  will be located according to RFC6120 procedure (that is DNS A/AAAA/SRV lookups).
+  will be located according to RFC6120 procedure, that is DNS A/AAAA/SRV lookup
+  of a domain part of `jid` parameter.
   Leaving the default alone is also not recommended for the reason described above.
+
+  An URI from the `servers` list is picked in round-robin manner during
+  initial connections setup, but it's picked randomly for reconnection attempts.
 
 Example:
 ```yaml
@@ -244,7 +255,7 @@ gnuplot: /opt/bin/gnuplot
 
 ## Parameters of the XMPP scenario
 
-These group of parameters are specific to the XMPP scenario only.
+This group of parameters are specific to the XMPP scenario only.
 The parameters described here are applied per single session.
 
 ### Mandatory parameters
@@ -288,7 +299,7 @@ password: pass%
   connection failure. Initially it is picked randomly between `1` and this
   configured value. Then, exponential back off is applied between several
   consecutive connection failures. The value is in **seconds**.
-  It can be set to `false` to disable reconnection attemps completely:
+  It can be set to `false` to disable reconnection attempts completely:
   thus the failed session will never be restored.
   The default is 60 (1 minute) - the value recommended by
   [RFC6120](https://tools.ietf.org/html/rfc6120#section-3.3).
@@ -320,14 +331,14 @@ password: pass%
 
   An interval between file transfers via Prox65 service (XEP-0065).
   The value is in **seconds**. It can be set to `false` to disable
-  this type of file transfer completely. The default is 600 (10 minutes).
+  file transfer completely. The default is 600 (10 minutes).
   See also `proxy65_size` option.
 
 - **http_upload_interval**: `pos_integer() | false`
 
   An interval between file uploads via HTTP Upload service (XEP-0363).
   The value is in **seconds**. It can be set to `false` to disable
-  this file uploads completely. The default is 600 (10 minutes).
+  file uploads completely. The default is 600 (10 minutes).
   See also `http_upload_size` option.
 
 #### Parameters for payload/size control
@@ -427,7 +438,7 @@ sasl_mechanisms:
 
 ## Parameters of the MQTT scenario
 
-These group of parameters are specific to the MQTT scenario only.
+This group of parameters are specific to the MQTT scenario only.
 The parameters described here are applied per single session.
 
 ### Mandatory parameters
@@ -562,7 +573,7 @@ will:
   connection failure. Initially it is picked randomly between `1` and this
   configured value. Then, exponential back off is applied between several
   consecutive connection failures. The value is in **seconds**.
-  It can be set to `false` to disable reconnection attemps completely:
+  It can be set to `false` to disable reconnection attempts completely:
   thus the failed session will never be restored.
   The default is 60 (1 minute).
 
@@ -605,7 +616,7 @@ password: pass%
 
 The symbol '?' is replaced by an identifier of random available session.
 For example, when there are already spawned 5 connections with 1,3 and 5
-connections being fully established (and, thus, internally registered as "sessions"),
+connections being fully established (and, thus, internally registered as a "session"),
 the pattern `user?` will yield into `user1`, `user3` or `user5`,
 but not into `user2` or `user4`.
 Patterns with such identifier are supposed to be used for sending/publishing
