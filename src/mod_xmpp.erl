@@ -338,8 +338,7 @@ handle_packet(#sm_resumed{}, State) ->
     xmpp_stream_out:establish(State1#{mgmt_resumed => true});
 handle_packet(#sm_failed{} = Err, #{stream_features := Features} = State) ->
     Txt = <<"Resumption failed: ", (format_error(Err))/binary>>,
-    rtb_stats:incr('errors'),
-    rtb_stats:incr({'error-reason', Txt}),
+    incr_error(Txt),
     State1 = reset_state(State),
     xmpp_stream_out:bind(State1, Features);
 handle_packet(#sm_failed{} = Err, State) ->
@@ -366,8 +365,7 @@ handle_stream_end(Reason, State) ->
 				error -> {Reason, State};
 				Other -> Other
 			    end,
-	    rtb_stats:incr('errors'),
-	    rtb_stats:incr({'error-reason', format_error(Err)}),
+            incr_error(Err),
 	    lager:debug("~s terminated: ~s; reconnecting...",
 			[format_me(State1), format_error(Err)]),
 	    State2 = reset_state(State1),
@@ -413,8 +411,7 @@ terminate(_Reason, #{conn_id := I, action := Action} = State) ->
     unregister(I, Action),
     try maps:get(stop_reason, State) of
 	Reason ->
-	    rtb_stats:incr('errors'),
-	    rtb_stats:incr({'error-reason', format_error(Reason)}),
+            incr_error(Reason),
 	    lager:debug("~s terminated: ~s",
 			[format_me(State), format_error(Reason)])
     catch _:{badkey, _} ->
@@ -752,7 +749,7 @@ disconnect(#{mgmt_timeout := MgmtTimeout} = State) ->
     State2 = cancel_timers(State1),
     reconnect_after(State2, MgmtTimeout);
 disconnect(#{lang := Lang} = State) ->
-    Txt = <<"Scheduled disconnect">>,
+    Txt = <<"Scheduled disconnection">>,
     send_pkt(State, xmpp:serr_reset(Txt, Lang)).
 
 %%%===================================================================
@@ -1023,8 +1020,7 @@ fail(#{action := Action} = State, Reason) ->
     Txt = iolist_to_binary(Reason),
     case Action of
 	send ->
-	    rtb_stats:incr('errors'),
-	    rtb_stats:incr({'error-reason', Txt}),
+            incr_error(Txt),
 	    State;
 	_ ->
 	    State1 = State#{stop_reason => Txt},
@@ -1053,6 +1049,12 @@ fail_iq_error(State, #iq{type = error, from = From} = IQ, Format) ->
 	    end,
     Txt = io_lib:format(Format ++ ": ~s", [FromS, format_error(IQ)]),
     fail(State, Txt).
+
+incr_error({stream, {out, #stream_error{reason = 'reset'}}}) ->
+    ok;
+incr_error(Err) ->
+    rtb_stats:incr('errors'),
+    rtb_stats:incr({'error-reason', format_error(Err)}).
 
 schedule_all_actions(State) ->
     lists:foldl(
