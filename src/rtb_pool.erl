@@ -73,7 +73,7 @@ init([I]) ->
     Capacity = rtb_config:get_option(capacity),
     BindAddrs = rtb_config:get_option(bind),
     Servers = shuffle(rtb_config:get_option(servers)),
-    if Interval == 0 orelse I == 1 ->
+    if I == 1 ->
 	    self() ! boot;
        true ->
 	    ok
