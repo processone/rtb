@@ -728,7 +728,10 @@ send_message(State) ->
     become(inactive, State2).
 
 send_presence(State) ->
-    send_pkt(State, #presence{}).
+    case rtb_config:get_option(presence_interval) of
+	false -> State;
+	_ -> send_pkt(State, #presence{})
+    end.
 
 upload_file(#{http_upload := {JID, Max}} = State) ->
     Size = p1_rand:uniform(Max),
