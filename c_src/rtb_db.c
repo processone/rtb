@@ -38,6 +38,7 @@
 #define ROSTERS_DIR "/tmp/roster/"
 
 typedef enum {T_EJABBERD = 1,
+	      T_JACKAL,
               T_METRONOME,
               T_MOSQUITTO,
               T_PROSODY} server_type;
@@ -55,12 +56,13 @@ typedef struct {
 } state_t;
 
 char *timestamp() {
-  return "1970-01-01 00:00:00";
+  return "1970-01-01 00:00:01";
 }
 
 char *format_server_type(server_type t) {
   switch (t) {
   case T_EJABBERD: return "ejabberd";
+  case T_JACKAL: return "jackal";
   case T_METRONOME: return "Metronome";
   case T_PROSODY: return "Prosody";
   case T_MOSQUITTO: return "Mosquitto";
@@ -170,7 +172,13 @@ void mk_user_csv_row(char *row, state_t *state) {
   char *password = state->password;
   char buf[BUFSIZE];
   memset(buf, 0, BUFSIZE);
-  sprintf(buf, "\"%s\",\"%s\",\"%s\",\"\",\"\",\"0\",\"%s\"\n", user, domain, password, timestamp());
+  char *ts = timestamp();
+  if (state->server_type == T_EJABBERD)
+    sprintf(buf, "\"%s\",\"%s\",\"%s\",\"\",\"\",\"0\",\"%s\"\n",
+	    user, domain, password, ts);
+  else
+    sprintf(buf, "\"%s\",\"%s\",\"\",\"%s\",\"%s\",\"%s\"\n",
+	    user, password, ts, ts, ts);
   replace(row, buf, '%', "%lu");
 }
 
@@ -178,9 +186,15 @@ void mk_roster_csv_row(char *row, state_t *state) {
   char *user = state->user;
   char *domain = state->domain;
   char buf[BUFSIZE];
-  sprintf(buf,
-          "\"%s\",\"%s\",\"%s@%s\",\"%s\",\"B\",\"N\",\"\",\"N\",\"\",\"item\",\"%s\"\n",
-          user, domain, user, domain, user, timestamp());
+  char *ts = timestamp();
+  if (state->server_type == T_EJABBERD)
+    sprintf(buf,
+	    "\"%s\",\"%s\",\"%s@%s\",\"%s\",\"B\",\"N\",\"\",\"N\",\"\",\"item\",\"%s\"\n",
+	    user, domain, user, domain, user, ts);
+  else
+    sprintf(buf,
+	    "\"%s\",\"%s@%s\",\"%s\",\"both\",\"\",\"0\",\"0\",\"%s\",\"%s\"\n",
+	    user, user, domain, user, ts, ts);
   replace(row, buf, '%', "%lu");
 }
 
@@ -411,21 +425,28 @@ void print_hint(state_t *state) {
       "   ENCLOSED BY '\"' LINES TERMINATED BY '\\n';\n";
     char *pgsql_cmd = " \\copy %s FROM '%s' WITH CSV QUOTE AS '\"';\n";
     char *sqlite_cmd = ".import '%s' %s\n";
+    char *roster_table;
+    if (state->server_type == T_EJABBERD)
+      roster_table = "rosterusers";
+    else
+      roster_table = "roster_items";
 
     printf("Now execute the following SQL commands:\n");
     printf("** MySQL:\n");
     printf(mysql_cmd, USERS_CSV_FILE, "users");
     if (have_rosters)
-      printf(mysql_cmd, ROSTERS_CSV_FILE, "rosterusers");
-    printf("** PostgreSQL:\n");
-    printf(pgsql_cmd, "users", USERS_CSV_FILE);
-    if (have_rosters)
-      printf(pgsql_cmd, "rosterusers", ROSTERS_CSV_FILE);
-    printf("** SQLite: \n");
-    printf(".mode csv\n");
-    printf(sqlite_cmd, USERS_CSV_FILE, "users");
-    if (have_rosters)
-      printf(sqlite_cmd, ROSTERS_CSV_FILE, "rosterusers");
+      printf(mysql_cmd, ROSTERS_CSV_FILE, roster_table);
+    if (state->server_type == T_EJABBERD) {
+      printf("** PostgreSQL:\n");
+      printf(pgsql_cmd, "users", USERS_CSV_FILE);
+      if (have_rosters)
+	printf(pgsql_cmd, roster_table, ROSTERS_CSV_FILE);
+      printf("** SQLite: \n");
+      printf(".mode csv\n");
+      printf(sqlite_cmd, USERS_CSV_FILE, "users");
+      if (have_rosters)
+	printf(sqlite_cmd, ROSTERS_CSV_FILE, roster_table);
+    }
   } else if (state->server_type == T_MOSQUITTO) {
     printf("Now set 'password_file' option of mosquitto.conf "
            "pointing to %s. Something like:\n"
@@ -454,7 +475,7 @@ void print_help() {
          "              [-f format] [-r roster-size] [-hv]\n"
          "Generate database/spool files for XMPP/MQTT servers.\n\n"
          "  -t, --type         type of the server; available values are:\n"
-         "                     ejabberd, metronome, mosquitto, prosody\n"
+         "                     ejabberd, jackal, metronome, mosquitto, prosody\n"
          "  -c, --capacity     total number of accounts to generate;\n"
          "                     must be an even positive integer\n"
          "  -u, --username     username pattern; must contain '%%' symbol;\n"
@@ -486,14 +507,15 @@ int validate_state(state_t *state, char *user) {
   }
   switch (state->file_type) {
   case T_FLAT:
-    if (state->server_type == T_EJABBERD) {
-      fprintf(stderr, "Unexpected database type for ejabberd: flat\n"
-              "Currently only 'sql' is supported.\n");
+    if (state->server_type == T_EJABBERD || state->server_type == T_JACKAL) {
+      fprintf(stderr, "Unexpected database type for %s: flat\n"
+              "Currently only 'sql' is supported.\n",
+	      format_server_type(state->server_type));
       return -1;
     }
     break;
   case T_CSV:
-    if (state->server_type != T_EJABBERD) {
+    if (state->server_type != T_EJABBERD && state->server_type != T_JACKAL) {
       fprintf(stderr, "Unexpected database type for %s: sql\n"
               "Currenty only 'flat' is supported.\n",
               format_server_type(state->server_type));
@@ -501,7 +523,7 @@ int validate_state(state_t *state, char *user) {
     }
     break;
   default:
-    if (state->server_type == T_EJABBERD)
+    if (state->server_type == T_EJABBERD || state->server_type == T_JACKAL)
       state->file_type = T_CSV;
     else
       state->file_type = T_FLAT;
@@ -576,6 +598,8 @@ state_t *mk_state(int argc, char *argv[]) {
     case 't':
       if (!strcmp(optarg, "ejabberd")) {
         state->server_type = T_EJABBERD;
+      } else if (!strcmp(optarg, "jackal")) {
+	state->server_type = T_JACKAL;
       } else if (!strcmp(optarg, "prosody")) {
         state->server_type = T_PROSODY;
       } else if (!strcmp(optarg, "metronome")) {
@@ -585,7 +609,7 @@ state_t *mk_state(int argc, char *argv[]) {
       } else {
         fprintf(stderr,
                 "Unsupported server type: '%s'\n"
-                "Available types: ejabberd, metronome, mosquitto and prosody\n",
+                "Available types: ejabberd, jackal, metronome, mosquitto and prosody\n",
                 optarg);
         return NULL;
       }
@@ -658,6 +682,7 @@ int main(int argc, char *argv[]) {
   if (state) {
     switch (state->server_type) {
     case T_EJABBERD:
+    case T_JACKAL:
       res = generate_users_csv(state);
       if (!res) {
         res = generate_rosters_csv(state);

@@ -111,15 +111,26 @@ Run `priv/bin/rtb_db --help` to see available options.
 ## XMPP scenario
 
 The utility is able to generate files for users and rosters in either
-CSV format ([ejabberd](https://www.ejabberd.im/)) or in Lua format
-([Metronome](https://metronome.im/)/[Prosody](https://prosody.im/)).
+CSV format ([ejabberd](https://www.ejabberd.im/) and [jackal](https://github.com/ortuman/jackal))
+or in Lua format ([Metronome](https://metronome.im/)/[Prosody](https://prosody.im/)).
 In order to generate files for ejabberd execute something like:
 ```
 $ priv/bin/rtb_db -t ejabberd -c 1000 -u user%@domain.tld -p pass% -r 20
 ```
-The same, but for Metronome/Prosody will look like:
+The same, but for Metronome will look like:
+```
+$ priv/bin/rtb_db -t metronome -c 1000 -u user%@domain.tld -p pass% -r 20
+
+```
+For Prosody:
 ```
 $ priv/bin/rtb_db -t prosody -c 1000 -u user%@domain.tld -p pass% -r 20
+
+```
+For jackal:
+```
+$ priv/bin/rtb_db -t jackal -c 1000 -u user%@domain.tld -p pass% -r 20
+
 ```
 Here 1000 is the total amount of users (must match `capacity` parameter
 of the configuration file) and 20 is the number of items in rosters.
