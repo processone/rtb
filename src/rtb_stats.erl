@@ -20,8 +20,7 @@
 -behaviour(p1_server).
 
 %% API
--export([start_link/0, incr/1, incr/2, decr/1, decr/2,
-         set/2, del/1, lookup/1]).
+-export([start_link/0, incr/1, incr/2, decr/1, decr/2, lookup/1]).
 -export([get_type/1, get_metrics/0, flush/1]).
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -45,23 +44,34 @@ incr(Metric) ->
     incr(Metric, 1).
 
 incr(Metric, Incr) ->
-    ets:update_counter(?MODULE, Metric, Incr, {Metric, 0}).
+    try ets:lookup_element(?MODULE, Metric, 2) of
+	Counter -> oneup:inc2(Counter, Incr)
+    catch _:badarg ->
+	    Counter = oneup:new_counter(),
+	    case ets:insert_new(?MODULE, {Metric, Counter}) of
+		true ->
+		    oneup:inc2(Counter, Incr);
+		false ->
+		    Counter2 = ets:lookup_element(?MODULE, Metric, 2),
+		    oneup:inc2(Counter2, Incr)
+	    end
+    end.
 
 decr(Metric) ->
     decr(Metric, 1).
 
 decr(Metric, Decr) ->
-    ets:update_counter(?MODULE, Metric, -Decr, {Metric, 0}).
-
-set(Key, Val) ->
-    ets:insert(?MODULE, {Key, Val}).
-
-del(Key) ->
-    ets:delete(?MODULE, Key).
+    try ets:lookup_element(?MODULE, Metric, 2) of
+	Counter -> oneup:inc2(Counter, -Decr)
+    catch _:badarg ->
+	    ok
+    end.
 
 lookup(Key) ->
-    try ets:lookup_element(?MODULE, Key, 2)
-    catch _:badarg -> 0
+    try ets:lookup_element(?MODULE, Key, 2) of
+	Counter -> oneup:get(Counter)
+    catch _:badarg ->
+	    0
     end.
 
 get_type(Metric) ->
@@ -155,7 +165,8 @@ write_row(TS, Int, File, Fd) ->
 
 write_hist(Name, File, Fd) ->
     {Hist, Sum} = lists:mapfoldl(
-                    fun({{_, X}, Y}, Acc) ->
+                    fun({{_, X}, Counter}, Acc) ->
+			    Y = oneup:get(Counter),
                             {{X, Y}, Acc+Y}
                     end, 0, ets:match_object(?MODULE, {{Name, '_'}, '_'})),
     try

@@ -98,7 +98,7 @@ start_apps() ->
         lists:foreach(
           fun(App) ->
                   {ok, _} = application:ensure_all_started(App)
-          end, [crypto, inets, p1_utils, fast_yaml])
+          end, [crypto, inets, p1_utils, fast_yaml, oneup])
     catch _:{badmatch, Reason} ->
             Reason
     end.
