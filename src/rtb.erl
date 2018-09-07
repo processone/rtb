@@ -85,8 +85,8 @@ start_apps() ->
         application:set_env(lager, error_logger_hwm, LogRateLimit),
         application:set_env(
           lager, handlers,
-          [{lager_console_backend, info},
-           {lager_file_backend, [{file, "log/info.log"},
+          [{lager_console_backend, [{level, info}]},
+           {lager_file_backend, [{file, "log/rtb.log"},
                                  {level, info}, {size, 0}]}]),
         application:set_env(lager, crash_log, "log/crash.log"),
         application:set_env(lager, crash_log_size, 0),
