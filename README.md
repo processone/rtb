@@ -579,6 +579,7 @@ will:
 
   Check if PUBLISH packets reach at least a single destination client. The result
   is displayed as `publish-loss` graph in the Web statistics interface.
+  The default is `false`.
 
   **NOTE**: the option is only available for MQTT 5.0. See `protocol_version` option.
 
