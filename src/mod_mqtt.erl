@@ -470,6 +470,7 @@ handle_packet(#pubcomp{id = ID, code = Code} = Pkt, StateName,
               #state{in_flight = #pubrel{id = ID} = Pubrel} = State) ->
     rtb_stats:incr({'publish-rtt', calc_rtt(Pubrel)}),
     case mqtt_codec:is_error_code(Code) of
+	true when Code == 'packet-identifier-not-found' -> ok;
         true -> log_error_packet(Pkt, StateName, State);
         false -> ok
     end,
