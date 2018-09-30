@@ -316,11 +316,10 @@ fail_unknown_opt(Opt) ->
     rtb:halt("Unknown option: ~s", [Opt]).
 
 prep_servers([Server|Servers]) ->
-    case http_uri:parse(Server) of
-	{ok, {Type, _, HostBin, Port, _, _}}
+    case http_uri:parse(binary_to_list(Server)) of
+	{ok, {Type, _, Host, Port, _, _}}
 	  when Port > 0 andalso Port < 65536
 	       andalso (Type == tls orelse Type == tcp) ->
-	    Host = binary_to_list(HostBin),
 	    Addr = case inet:parse_address(Host) of
 		       {ok, IP} -> IP;
 		       {error, _} -> Host
