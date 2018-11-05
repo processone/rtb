@@ -482,6 +482,11 @@ handle_iq(#iq{type = set, from = From, lang = Lang} = IQ,
 	    Txt = xmpp:io_format_error(Why),
 	    send_pkt(State, xmpp:serr_invalid_xml(Txt, Lang))
     end;
+handle_iq(#iq{type = get, from = From, to = To, id = ID,
+              sub_els = [#xmlel{name = <<"ping">>, attrs = [{<<"xmlns">>,<<"urn:xmpp:ping">>}], children = []}]},
+             State) ->
+
+    send_pkt(State, #iq{id = ID, from = To, to = From, type = result});
 handle_iq(IQ, State) ->
     send_iq_error(State, IQ).
 
