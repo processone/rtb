@@ -21,7 +21,7 @@
 
 %% API
 -export([start_link/0, incr/1, incr/2, decr/1, decr/2, lookup/1]).
--export([get_type/1, get_metrics/0, flush/1]).
+-export([get_type/1, get_metrics/0, flush/1, show_errors/0]).
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
@@ -82,6 +82,12 @@ get_metrics() ->
 
 flush(Metric) ->
     p1_server:call(?MODULE, {flush, Metric}, infinity).
+
+show_errors() ->
+    lists:foreach(
+      fun({{_, Reason}, Counter}) ->
+	      io:format("~s: ~B~n", [Reason, oneup:get(Counter)])
+      end, ets:match_object(?MODULE, {{'error-reason', '_'}, '_'})).
 
 %%%===================================================================
 %%% gen_server callbacks

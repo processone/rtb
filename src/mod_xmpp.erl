@@ -44,8 +44,9 @@
 	 proxy65_activate_callback/4,
 	 upload_request_callback/4]).
 %% Scheduled actions
--export([send_message/1, send_presence/1, disconnect/1, upload_file/1,
-	 proxy65_send_file/1]).
+-export([send_message/1, broadcast_presence/1,
+	 muc_send_message/1, disconnect/1,
+	 upload_file/1, proxy65_send_file/1]).
 
 -include("rtb.hrl").
 -include("xmpp.hrl").
@@ -81,6 +82,7 @@ options() ->
      {reconnect_interval, 60},
      {message_interval, 600},
      {presence_interval, 600},
+     {muc_message_interval, 600},
      {disconnect_interval, 600},
      {proxy65_interval, 600},
      {proxy65_size, 10485760},
@@ -95,6 +97,7 @@ options() ->
      {roster, true},
      {rosterver, true},
      {private, true},
+     {muc_rooms, []},
      %% Required options
      jid,
      password].
@@ -155,6 +158,8 @@ prep_option(message_to, undefined) ->
     {message_to, undefined};
 prep_option(http_upload_size, undefined) ->
     {http_upload_size, undefined};
+prep_option(muc_rooms, Rooms) ->
+    {muc_rooms, [jid:remove_resource(prep_jid(Room)) || Room <- Rooms]};
 prep_option(starttls, Bool) ->
     case rtb_config:to_bool(Bool) of
 	true ->
@@ -177,6 +182,7 @@ prep_option(Opt, I) when is_integer(I) andalso I>0 andalso
 			  Opt == connect_timeout orelse
 			  Opt == http_upload_size orelse
 			  Opt == message_interval orelse
+			  Opt == muc_message_interval orelse
 			  Opt == presence_interval orelse
 			  Opt == disconnect_interval orelse
 			  Opt == http_upload_interval orelse
@@ -187,6 +193,7 @@ prep_option(Opt, I) when is_integer(I) andalso I>0 andalso
     {Opt, I};
 prep_option(Opt, Val) when Opt == message_interval;
 			   Opt == presence_interval;
+			   Opt == muc_message_interval;
 			   Opt == disconnect_interval;
 			   Opt == reconnect_interval;
 			   Opt == proxy65_interval;
@@ -443,7 +450,7 @@ handle_iq(#iq{type = T, id = ID} = IQ,
 		    case missing_services(State2) of
 			[] ->
 			    State3 = session_established(State2),
-			    send_presence(State3);
+			    broadcast_presence(State3);
 			Features ->
 			    From = jid:make(maps:get(server, State2)),
 			    fail_missing_features(State2, From, Features)
@@ -498,6 +505,34 @@ handle_iq(IQ, State) ->
 handle_message(_, State) ->
     State.
 
+handle_presence(#presence{from = From, type = Type} = Pres,
+		#{rooms := Rooms} = State)
+  when Type == error; Type == available; Type == unavailable ->
+    RoomJID = jid:remove_resource(jid:tolower(From)),
+    try maps:get(RoomJID, Rooms) of
+	Joined when Type == error ->
+	    Format = case Joined of
+			 false -> "Failed to join room ~s";
+			 true -> "Got presence error from room ~s"
+		     end,
+	    Rooms1 = Rooms#{RoomJID => false},
+	    State1 = State#{rooms => Rooms1},
+	    Err = io_lib:format(Format ++ ": ~s",
+				[jid:encode(RoomJID), format_error(Pres)]),
+	    fail(State1, Err);
+	false when Type == available ->
+	    Rooms1 = Rooms#{RoomJID => true},
+	    State#{rooms => Rooms1};
+	true when Type == unavailable ->
+	    Rooms1 = Rooms#{RoomJID => false},
+	    State1 = State#{rooms => Rooms1},
+	    Err = io_lib:format("Kicked from room ~s", [jid:encode(RoomJID)]),
+	    fail(State1, Err);
+	_ ->
+	    State
+    catch _:_ ->
+	    State
+    end;
 handle_presence(_, State) ->
     State.
 
@@ -737,11 +772,54 @@ send_message(State) ->
     State2 = send_pkt(State1, Msg),
     become(inactive, State2).
 
-send_presence(State) ->
-    case rtb_config:get_option(presence_interval) of
-	false -> State;
-	_ -> send_pkt(State, #presence{})
-    end.
+muc_send_message(#{rooms := Rooms} = State) ->
+    Rooms1 = maps:filter(fun(_, Joined) -> Joined == true end, Rooms),
+    case maps:size(Rooms1) of
+	0 -> State;
+	N ->
+	    Payload = rtb_config:get_option(message_body),
+	    Pos = p1_rand:uniform(1, N),
+	    Room = lists:nth(Pos, maps:keys(Rooms1)),
+	    Msg = #message{to = jid:make(Room),
+			   type = groupchat,
+			   body = xmpp:mk_text(Payload)},
+	    State1 = become(active, State),
+	    State2 = send_pkt(State1, Msg),
+	    become(inactive, State2)
+    end;
+muc_send_message(State) ->
+    State.
+
+broadcast_presence(State) ->
+    State1 = case rtb_config:get_option(presence_interval) of
+		 false -> State;
+		 _ -> send_pkt(State, #presence{})
+	     end,
+    send_muc_presences(State1).
+
+send_muc_presences(#{user := Nick} = State) ->
+    State1 = case maps:is_key(rooms, State) of
+		 true -> State;
+		 false ->
+		     I = maps:get(conn_id, State),
+		     Rooms = lists:foldl(
+			       fun(RoomPattern, Acc) ->
+				       RoomJID = jid:tolower(
+						   jid:remove_resource(
+						     make_jid(RoomPattern, I))),
+				       Acc#{RoomJID => false}
+			       end, #{}, rtb_config:get_option(muc_rooms)),
+		     State#{rooms => Rooms}
+	     end,
+    maps:fold(
+      fun(Room, Joined, State0) ->
+	      RoomJIDNick = jid:replace_resource(jid:make(Room), Nick),
+	      Els = if Joined -> [];
+		       true -> [#muc{}]
+		    end,
+	      Pres = #presence{to = RoomJIDNick, sub_els = Els},
+	      send_pkt(State0, Pres)
+      end, State1, maps:get(rooms, State1)).
 
 upload_file(#{http_upload := {JID, Max}} = State) ->
     Size = p1_rand:uniform(Max),
@@ -894,6 +972,7 @@ reset_state(State) ->
 		  (http_upload, _) -> false;
 		  (proxy65, _) -> false;
 		  (stream_features, _) -> false;
+		  (rooms, _) -> false;
 		  (_, _) -> true
 	       end, State),
     State2 = cancel_timers(State1),
@@ -1031,6 +1110,7 @@ become(_, State) ->
 
 fail(#{action := Action} = State, Reason) ->
     Txt = iolist_to_binary(Reason),
+    lager:debug(Reason),
     case Action of
 	send ->
             incr_error(Txt),
@@ -1075,10 +1155,14 @@ schedule_all_actions(State) ->
 	      schedule(StateAcc, IntervalName, FunName, true)
       end, State,
       [{message_interval, send_message},
-       {presence_interval, send_presence},
+       {presence_interval, broadcast_presence},
        {http_upload_interval, upload_file},
        {proxy65_interval, proxy65_send_file},
-       {disconnect_interval, disconnect}]).
+       {disconnect_interval, disconnect}|
+       case rtb_config:get_option(muc_rooms) of
+	   [] -> [];
+	   _ -> [{muc_message_interval, muc_send_message}]
+       end]).
 
 schedule(#{action := send} = State, IntervalName, FunName, Randomize) ->
     case rtb_config:get_option(IntervalName) of
@@ -1098,7 +1182,8 @@ schedule(State, _, _, _) ->
 cancel_timers(State) ->
     maps:filter(
       fun(Key, TRef) when Key == send_message;
-			  Key == send_presence;
+			  Key == muc_send_message;
+			  Key == broadcast_presence;
 			  Key == upload_file;
 			  Key == proxy65_send_file;
 			  Key == disconnect ->

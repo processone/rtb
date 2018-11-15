@@ -31,8 +31,7 @@ stress test all features defined in the
 
 RTB is in an early stage of development with the following limitations:
 - MQTT support is limited to versions 3.1.1 and 5.0
-- For XMPP protocol support for
-  [Multi-User Chat](https://xmpp.org/extensions/xep-0045.html) and
+- For XMPP protocol, support for
   [Personal Eventing Protocol](https://xmpp.org/extensions/xep-0163.html)
   is lacking.
 
@@ -332,6 +331,16 @@ password: pass%
   It can be set to `false` to disable sending messages completely.
   The default is 600 (10 minutes). See also `message_body_size` option.
 
+- **muc_message_interval**: `pos_integer() | false`
+
+  An interval between sending groupchat messages. The value is in **seconds**.
+  It can be set to `false` to disable sending groupchat messages completely.
+  The default is 600 (10 minutes). If there are several MUC rooms configured,
+  the groupchat message is sent to a randomly chosen one, i.e. RTB doesn't
+  multicast the message to all joined rooms.
+  See also `message_body_size` and `muc_rooms` options.
+  The option doesn't have any effect if `muc_rooms` option is not set.
+
 - **presence_interval**: `pos_integer() | false`
 
   An interval between sending presence broadcats. The value is in **seconds**.
@@ -441,6 +450,18 @@ password: pass%
   The default is `true`.
 
 #### Miscellaneous parameters
+
+- **muc_rooms**: `[pattern()]`
+
+  A list of MUC room bare JIDs to join, expressed as a pattern. Refer to
+  [Patterns](#patterns) section for the detailed explanation of possible pattern values.
+  Example:
+  ```yaml
+  muc_rooms:
+    - large1@conference.domain.tld
+    - medium[1..10]@conference.domain.tld
+    - small[1..100]@conference.domain.tld
+  ```
 
 - **sasl_mechanisms**: `[string()]`
 
