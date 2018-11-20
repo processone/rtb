@@ -472,6 +472,7 @@ password: pass%
 
   A list of MUC room bare JIDs to join, expressed as a pattern. Refer to
   [Patterns](#patterns) section for the detailed explanation of possible pattern values.
+  The default value is an empty list which means no rooms will be joined.
   Example:
   ```yaml
   muc_rooms:
