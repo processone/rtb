@@ -139,6 +139,7 @@ metrics() ->
             #metric{name = 'disco-items-rtt', type = hist},
             #metric{name = 'mam-prefs-set-rtt', type = hist},
             #metric{name = 'mam-query-rtt', type = hist},
+	    #metric{name = 'muc-mam-query-rtt', type = hist},
             #metric{name = 'private-get-rtt', type = hist},
             #metric{name = 'block-list-get-rtt', type = hist},
             #metric{name = 'proxy65-activate-rtt', type = hist},
