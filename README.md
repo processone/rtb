@@ -405,6 +405,16 @@ password: pass%
   There is no default value: the option is only needed to set
   if the service doesn't report its maximum file size.
 
+- **mam_size**: `non_neg_integer()`
+
+  The size of the MAM archive to request from the server. Only makes
+  sense when `mam` is not set to `false`. The default is 50 (messages).
+
+- **muc_mam_size**: `non_neg_integer()`
+
+  The size of the MAM archive to request from MUC rooms. Only makes
+  sense when `muc_mam` is not set to `false`. The default is 50 (messages).
+
 #### Parameters for enabling/disabling features
 
 - **starttls**: `true | false`
@@ -424,7 +434,14 @@ password: pass%
 - **mam**: `true | false`
 
   Whether to enable MAM and request MAM archives at login time or not (XEP-0313).
-  The default is `true`. The requested size of the archive is 20 (messages).
+  The default is `true`. The requested size of the archive is controlled
+  by `mam_size` option.
+
+- **muc_mam**: `true | false`
+
+  Whether to request MAM archives from MUC room or not (XEP-0313).
+  The default is `true`. The requested size of the archive is controlled
+  by `muc_mam_size` option.
 
 - **carbons**: `true | false`
 

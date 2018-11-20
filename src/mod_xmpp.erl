@@ -39,6 +39,7 @@
 	 private_get_callback/3,
 	 mam_prefs_set_callback/3,
 	 mam_query_callback/3,
+	 muc_mam_query_callback/3,
 	 proxy65_get_callback/3,
 	 proxy65_set_callback/6,
 	 proxy65_activate_callback/4,
@@ -88,10 +89,13 @@ options() ->
      {proxy65_size, 10485760},
      {http_upload_interval, 600},
      {http_upload_size, undefined},
+     {mam_size, 50},
+     {muc_mam_size, 50},
      {starttls, true},
      {csi, true},
      {sm, true},
      {mam, true},
+     {muc_mam, true},
      {carbons, true},
      {blocklist, true},
      {roster, true},
@@ -109,6 +113,7 @@ metrics() ->
                  Name == 'carbons-enable-rtt' -> rtb_config:get_option(carbons);
                  Name == 'mam-prefs-set-rtt';
                  Name == 'mam-query-rtt' -> rtb_config:get_option(mam);
+		 Name == 'muc-mam-query-rtt' -> rtb_config:get_option(muc_mam);
                  Name == 'private-get-rtt' -> rtb_config:get_option(private);
                  Name == 'block-list-get-rtt' -> rtb_config:get_option(blocklist);
                  Name == 'proxy65-activate-rtt';
@@ -175,7 +180,7 @@ prep_option(starttls, Bool) ->
     end;
 prep_option(Opt, Bool) when Opt == csi; Opt == rosterver; Opt == sm;
 			    Opt == mam; Opt == carbons; Opt == blocklist;
-			    Opt == roster; Opt == private ->
+			    Opt == roster; Opt == private; Opt == muc_mam ->
     {Opt, rtb_config:to_bool(Bool)};
 prep_option(Opt, I) when is_integer(I) andalso I>0 andalso
 			 (Opt == negotiation_timeout orelse
@@ -189,6 +194,8 @@ prep_option(Opt, I) when is_integer(I) andalso I>0 andalso
 			  Opt == proxy65_interval orelse
 			  Opt == reconnect_interval orelse
 			  Opt == http_upload_size orelse
+			  Opt == mam_size orelse
+			  Opt == muc_mam_size orelse
 			  Opt == proxy65_size) ->
     {Opt, I};
 prep_option(Opt, Val) when Opt == message_interval;
@@ -510,7 +517,20 @@ handle_presence(#presence{from = From, type = Type} = Pres,
   when Type == error; Type == available; Type == unavailable ->
     RoomJID = jid:remove_resource(jid:tolower(From)),
     try maps:get(RoomJID, Rooms) of
-	Joined when Type == error ->
+	Joined ->
+	    handle_muc_presence(Joined, RoomJID, Pres, State)
+    catch _:{badkey, _} ->
+	    State
+    end;
+handle_presence(_, State) ->
+    State.
+
+%%%===================================================================
+%%% Callbacks
+%%%===================================================================
+handle_muc_presence(Joined, RoomJID, Pres, #{rooms := Rooms} = State) ->
+    case {Joined, Pres#presence.type} of
+	{_, error} ->
 	    Format = case Joined of
 			 false -> "Failed to join room ~s";
 			 true -> "Got presence error from room ~s"
@@ -520,21 +540,27 @@ handle_presence(#presence{from = From, type = Type} = Pres,
 	    Err = io_lib:format(Format ++ ": ~s",
 				[jid:encode(RoomJID), format_error(Pres)]),
 	    fail(State1, Err);
-	false when Type == available ->
+	{false, available} ->
 	    Rooms1 = Rooms#{RoomJID => true},
-	    State#{rooms => Rooms1};
-	true when Type == unavailable ->
+	    State1 = State#{rooms => Rooms1},
+	    case rtb_config:get_option(muc_mam) of
+		true ->
+		    Max = rtb_config:get_option(muc_mam_size),
+		    IQ = #iq{type = set, to = RoomJID,
+			     sub_els = [#mam_query{xmlns = ?NS_MAM_2,
+						   rsm = #rsm_set{max = Max}}]},
+		    send_iq(State1, IQ, muc_mam_query_callback);
+		false ->
+		    State1
+	    end;
+	{true, unavailable} ->
 	    Rooms1 = Rooms#{RoomJID => false},
 	    State1 = State#{rooms => Rooms1},
 	    Err = io_lib:format("Kicked from room ~s", [jid:encode(RoomJID)]),
 	    fail(State1, Err);
 	_ ->
 	    State
-    catch _:_ ->
-	    State
-    end;
-handle_presence(_, State) ->
-    State.
+    end.
 
 %%%===================================================================
 %%% IQ callbacks
@@ -644,6 +670,13 @@ mam_query_callback(State, #iq{type = result}, RTT) ->
 mam_query_callback(State, IQ, RTT) ->
     rtb_stats:incr({'mam-query-rtt', RTT}),
     fail_iq_error(State, IQ, "Failed to query MAM archive for ~s").
+
+muc_mam_query_callback(State, #iq{type = result}, RTT) ->
+    rtb_stats:incr({'muc-mam-query-rtt', RTT}),
+    State;
+muc_mam_query_callback(State, IQ, RTT) ->
+    rtb_stats:incr({'muc-mam-query-rtt', RTT}),
+    fail_iq_error(State, IQ, "Failed to query MAM archive from room ~s").
 
 upload_request_callback(#{lang := Lang} = State,
 			#iq{type = result, from = From} = IQRes, RTT, Size) ->
@@ -811,11 +844,15 @@ send_muc_presences(#{user := Nick} = State) ->
 			       end, #{}, rtb_config:get_option(muc_rooms)),
 		     State#{rooms => Rooms}
 	     end,
+    History = case rtb_config:get_option(muc_mam) of
+		  true -> #muc_history{maxstanzas = 0};
+		  false -> undefined
+	      end,
     maps:fold(
       fun(Room, Joined, State0) ->
 	      RoomJIDNick = jid:replace_resource(jid:make(Room), Nick),
 	      Els = if Joined -> [];
-		       true -> [#muc{}]
+		       true -> [#muc{history = History}]
 		    end,
 	      Pres = #presence{to = RoomJIDNick, sub_els = Els},
 	      send_pkt(State0, Pres)
@@ -897,6 +934,11 @@ send_iq_requests(State) ->
 
 list_iq_requests(#{server := Server}) ->
     ServerJID = jid:make(Server),
+    Ver = case rtb_config:get_option(rosterver) of
+	      true -> <<"">>;
+	      false -> undefined
+	  end,
+    Max = rtb_config:get_option(mam_size),
     lists:filter(
       fun({_, carbons_set_callback}) -> rtb_config:get_option(carbons);
 	 ({_, blocklist_get_callback}) -> rtb_config:get_option(blocklist);
@@ -916,20 +958,15 @@ list_iq_requests(#{server := Server}) ->
 	carbons_set_callback},
        {#iq{type = get, sub_els = [#block_list{}]},
 	blocklist_get_callback},
-       {begin
-	    Ver = case rtb_config:get_option(rosterver) of
-		      true -> <<"">>;
-		      false -> undefined
-		  end,
-	    #iq{type = get, sub_els = [#roster_query{ver = Ver}]}
-	end, roster_get_callback},
+       {#iq{type = get, sub_els = [#roster_query{ver = Ver}]},
+	roster_get_callback},
        {#iq{type = get, sub_els = [#private{sub_els = [#bookmark_storage{}]}]},
 	private_get_callback},
        {#iq{type = set, sub_els = [#mam_prefs{xmlns = ?NS_MAM_2,
 					      default = always}]},
 	mam_prefs_set_callback},
        {#iq{type = set, sub_els = [#mam_query{xmlns = ?NS_MAM_2,
-					      rsm = #rsm_set{max = 50}}]},
+					      rsm = #rsm_set{max = Max}}]},
 	mam_query_callback}]).
 
 send_pkt(State, Pkt) when ?is_stanza(Pkt) ->
