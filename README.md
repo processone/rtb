@@ -722,4 +722,6 @@ subscribe:
   /rtb/topic/[1..10]: 2
 publish:
   topic: /rtb/topic/[1..10]
+muc_rooms:
+  - room[1..5]@conference.domain.tld
 ```
