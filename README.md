@@ -360,7 +360,7 @@ password: pass%
 
 - **proxy65_interval**: `pos_integer() | false`
 
-  An interval between file transfers via Prox65 service (XEP-0065).
+  An interval between file transfers via Proxy65 service (XEP-0065).
   The value is in **seconds**. It can be set to `false` to disable
   file transfer completely. The default is 600 (10 minutes).
   See also `proxy65_size` option.
