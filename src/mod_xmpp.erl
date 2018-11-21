@@ -27,7 +27,7 @@
 -export([sasl_mechanisms/1, handle_stream_end/2, resolve/2,
 	 connect_options/3, connect_timeout/1, handle_timeout/1]).
 -export([handle_stream_established/1, handle_packet/2,
-	 handle_authenticated_features/2]).
+	 handle_connect/1, handle_authenticated_features/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 %% IQ callbacks
@@ -126,6 +126,7 @@ metrics() ->
                       true
               end
       end, [#metric{name = sessions, call = fun rtb_sm:size/0},
+	    #metric{name = connections},
             #metric{name = errors},
             #metric{name = 'message-out'},
             #metric{name = 'message-in'},
@@ -269,6 +270,10 @@ init([State, {I, Opts, Servers, JustStarted}]) ->
     State2 = xmpp_stream_out:set_timeout(State1, timer:seconds(NegTimeout)),
     {ok, State2}.
 
+handle_connect(State) ->
+    rtb_stats:incr(connections),
+    State#{connected => true}.
+
 handle_authenticated_features(Features, State) ->
     case missing_stream_features(State, Features) of
 	[] ->
@@ -367,7 +372,7 @@ handle_packet(_, State) ->
 handle_stream_end(Reason, #{just_started := true} = State) ->
     Err = maps:get(stop_reason, State, Reason),
     rtb:halt(format_error(Err), []);
-handle_stream_end(Reason, State) ->
+handle_stream_end(Reason, #{conn_id := I} = State) ->
     case rtb_config:get_option(reconnect_interval) of
 	false ->
 	    State1 = case maps:is_key(stop_reason, State) of
@@ -384,6 +389,7 @@ handle_stream_end(Reason, State) ->
 	    lager:debug("~s terminated: ~s; reconnecting...",
 			[format_me(State1), format_error(Err)]),
 	    State2 = reset_state(State1),
+	    rtb_sm:unregister(I),
 	    reconnect_after(State2, Timeout)
     end.
 
@@ -422,8 +428,12 @@ handle_info(Info, State) ->
     lager:warning("Unexpected info: ~p", [Info]),
     State.
 
-terminate(_Reason, #{conn_id := I, action := Action} = State) ->
-    unregister(I, Action),
+terminate(_Reason, #{conn_id := I} = State) ->
+    rtb_sm:unregister(I),
+    case maps:is_key(connected, State) of
+	true -> rtb_stats:decr(connections);
+	false -> ok
+    end,
     try maps:get(stop_reason, State) of
 	Reason ->
             incr_error(Reason),
@@ -1016,12 +1026,11 @@ reset_state(State) ->
     State2 = cancel_timers(State1),
     State2#{iq_requests => #{}}.
 
-unregister(I, _Action) ->
-    rtb_sm:unregister(I),
-    rtb_pool:unregister(self()).
-
-reconnect_after(#{action := Action, conn_id := I} = State, Timeout) ->
-    unregister(I, Action),
+reconnect_after(State, Timeout) ->
+    case maps:is_key(connected, State) of
+	true -> rtb_stats:decr(connections);
+	false -> ok
+    end,
     {Timeout1, Factor} = maps:get(reconnect_after, State,
 				  {random_interval(Timeout), 1}),
     Factor1 = Factor*2,
@@ -1029,7 +1038,8 @@ reconnect_after(#{action := Action, conn_id := I} = State, Timeout) ->
 		    csi_state => active,
 		    reconnect_after => {Timeout1*Factor1, Factor1},
 		    conn_addrs => rtb:random_server()},
-    xmpp_stream_out:set_timeout(State1, Timeout1).
+    State2 = maps:remove(connected, State1),
+    xmpp_stream_out:set_timeout(State2, Timeout1).
 
 session_established(#{user := U, server := S,
 		      resource := R, conn_id := I} = State) ->
