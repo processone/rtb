@@ -38,7 +38,8 @@
 -type sockmod() :: gen_tcp | ssl.
 -type socket() :: gen_tcp:socket() | ssl:sslsocket().
 -type proxy65_error() :: {socks5, atom()} | {sockmod(), atom()} |
-			 crashed | shutdown.
+			 crashed | shutdown | init_timeout |
+			 activation_timeout.
 
 -record(state, {host    :: string(),
 		port    :: inet:port_number(),
@@ -70,6 +71,10 @@ format_error(crashed) ->
     "Proxy65 failure: connection has been crashed";
 format_error(shutdown) ->
     "Proxy65 failure: the system is shutting down";
+format_error(init_timeout) ->
+    "Proxy65 failure: timed out during initialization";
+format_error(activation_timeout) ->
+    "Proxy65 failure: timed out waiting for activation";
 format_error(Reason) ->
     "Proxy65 failure: " ++ format_socket_error(Reason).
 
@@ -118,7 +123,11 @@ handle_cast(Msg, State) ->
 handle_info({'DOWN',  _,  _,  _,  _}, State) ->
     {stop, normal, State};
 handle_info(timeout, State) ->
-    reply(State, {error, timeout}),
+    Reason = case State#state.socket of
+		 undefined -> init_timeout;
+		 _ -> activation_timeout
+	     end,
+    reply(State, {error, Reason}),
     {stop, normal, State};
 handle_info(Info, State) ->
     lager:warning("Unexpected info: ~p", [Info]),
