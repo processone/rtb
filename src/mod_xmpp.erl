@@ -489,7 +489,8 @@ handle_iq(#iq{type = set, from = From, lang = Lang} = IQ,
 	    #streamhost{host = Host, jid = Service, port = Port} = StreamHost,
 	    Timeout = timer:seconds(rtb_config:get_option(connect_timeout)),
 	    Hash = p1_sha:sha([SID, jid:encode(From), jid:encode(JID)]),
-	    {Size, _} = string:to_integer(SID),
+	    [SSize, _] = binary:split(SID, <<$->>),
+	    Size = binary_to_integer(SSize),
 	    case mod_xmpp_proxy65:recv(
 		   Host, Port, Hash, Size, ConnOpts, Timeout) of
 		{ok, _} ->
