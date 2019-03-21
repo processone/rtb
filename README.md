@@ -11,7 +11,7 @@ avoiding disambiguations as much as possible. RTB is believed
 to be used in such role because it has sane defaults (gathered
 from statistics of real world servers) and it is able to
 stress test all features defined in the
-[XMPP Compliance Suite 2018](https://xmpp.org/extensions/xep-0387.html)
+[XMPP Compliance Suite 2019](https://xmpp.org/extensions/xep-0412.html)
 
 **Table of Contents**:
 1. [Status](#status)
