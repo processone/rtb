@@ -43,7 +43,7 @@
 		timeout          :: infinity | integer(),
                 keep_alive       :: seconds(),
 		client_id        :: binary(),
-		socket           :: undefined | {sockmod(), socket()},
+		socket           :: undefined | mqtt_socket:socket(),
 		codec            :: mqtt_codec:state(),
 		pingreq          :: undefined | pingreq(),
 		clean_session    :: boolean(),
@@ -51,7 +51,7 @@
 		in_flight        :: undefined | in_flight_packet(),
 		conn_id          :: integer(),
 		conn_opts        :: [gen_tcp:option()],
-		conn_addrs       :: [{server(), inet:port_number(), boolean()}],
+		conn_addrs       :: [endpoint()],
 		stop_reason      :: undefined | error_reason(),
 		just_started     :: boolean(),
                 subscribed       :: boolean(),
@@ -65,26 +65,17 @@
 -type state() :: #state{}.
 -type state_name() :: connecting | waiting_for_connack |
                       session_established | disconnected.
--type server() :: inet:hostname() | inet:ip_address().
--type sockmod() :: gen_tcp | fast_tls.
--type socket() :: inet:socket() | fast_tls:tls_socket().
 -type seconds() :: non_neg_integer().
 -type milli_seconds() :: non_neg_integer().
 -type in_flight_packet() :: subscribe() | unsubscribe() | publish() | pubrel().
--type socket_error_reason() :: closed | timeout | inet:posix().
 -type error_reason() :: {disconnected, reason_code(), binary()} |
                         {auth, reason_code(), binary()} |
-			{socket, socket_error_reason()} |
-			{dns, inet:posix() | inet_res:res_error()} |
 			{codec, mqtt_codec:error_reason()} |
 			{unexpected_packet, atom()} |
-			{tls, inet:posix() | atom() | binary()} |
+			mqtt_socket:error_reason() |
 			internal_server_error | timeout | ping_timeout |
 			queue_full | disconnected | shutdown |
                         subscribe_failure.
-
--define(DNS_TIMEOUT, timer:seconds(5)).
--define(TCP_SEND_TIMEOUT, timer:seconds(15)).
 
 %%%===================================================================
 %%% API
@@ -314,9 +305,10 @@ handle_sync_event(Event, From, StateName, State) ->
 		  [From, StateName, Event]),
     next_state(StateName, State).
 
-handle_info({tcp, TCPSock, TCPData}, StateName,
-	    #state{codec = Codec, socket = {_, _} = Socket} = State) ->
-    case recv_data(Socket, TCPData) of
+handle_info({tcp, Sock, RawData}, StateName,
+	    #state{codec = Codec, socket = Socket} = State)
+  when Socket /= undefined ->
+    case mqtt_socket:recv(Socket, RawData) of
 	{ok, Data} ->
 	    case mqtt_codec:decode(Codec, Data) of
 		{ok, Pkt, Codec1} ->
@@ -325,7 +317,7 @@ handle_info({tcp, TCPSock, TCPData}, StateName,
 		    State1 = State#state{codec = Codec1},
 		    case handle_packet(Pkt, StateName, State1) of
 			{ok, State2} ->
-			    handle_info({tcp, TCPSock, <<>>},
+			    handle_info({tcp, Sock, <<>>},
 					session_established, State2);
 			{error, State2, Reason} ->
 			    stop(StateName, State2, Reason)
@@ -346,6 +338,14 @@ handle_info({tcp_closed, _Sock}, StateName, State) ->
     stop(StateName, State, {socket, closed});
 handle_info({tcp_error, _Sock, Reason}, StateName, State) ->
     stop(StateName, State, {socket, Reason});
+handle_info({gun_ws, ConnPid, _Ref, {binary, Data}}, StateName, State) ->
+    handle_info({tcp, ConnPid, Data}, StateName, State);
+handle_info({gun_down, ConnPid, _, _, _, _}, StateName, State) ->
+    handle_info({tcp_closed, ConnPid}, StateName, State);
+handle_info({gun_error, ConnPid, _Reason}, StateName, State) ->
+    handle_info({tcp_closed, ConnPid}, StateName, State);
+handle_info({gun_error, ConnPid, _StreamRef, _Reason}, StateName, State) ->
+    handle_info({tcp_closed, ConnPid}, StateName, State);
 handle_info({timeout, Ref, {Action, _, Pos} = Msg}, StateName, State)
   when element(Pos, State) == Ref ->
     State1 = setelement(Pos, State, undefined),
@@ -684,7 +684,7 @@ resend(#state{in_flight = undefined} = State) ->
 resend(#state{in_flight = Pkt} = State) ->
     send(State, set_dup_flag(Pkt)).
 
-send(#state{socket = {SockMod, Sock} = Socket} = State, Pkt) ->
+send(#state{socket = Socket} = State, Pkt) when Socket /= undefined ->
     Pkt1 = case Pkt of
                #publish{dup = false} ->
                    rtb_stats:incr('publish-out'),
@@ -695,8 +695,7 @@ send(#state{socket = {SockMod, Sock} = Socket} = State, Pkt) ->
     lager:debug("Send MQTT packet:~n~s", [pp(Pkt1)]),
     Data = mqtt_codec:encode(State#state.version, Pkt1),
     rtb_stats:incr('packets-out'),
-    Res = SockMod:send(Sock, Data),
-    check_sock_result(Socket, Res),
+    mqtt_socket:send(Socket, Data),
     reset_keep_alive(State);
 send(State, _) ->
     State.
@@ -719,17 +718,13 @@ stop_tracking(#publish{properties = #{user_property := Props}}) ->
 stop_tracking(_) ->
     false.
 
-activate(#state{socket = {SockMod, Sock} = Socket}) ->
-    Res = case SockMod of
-	      gen_tcp -> inet:setopts(Sock, [{active, once}]);
-	      _ -> SockMod:setopts(Sock, [{active, once}])
-	  end,
-    check_sock_result(Socket, Res);
+activate(#state{socket = Socket}) when Socket /= undefined ->
+    mqtt_socket:activate(Socket);
 activate(_State) ->
     ok.
 
 -spec close_socket(state(), error_reason()) -> state().
-close_socket(#state{socket = {SockMod, Sock}} = State, Err) ->
+close_socket(#state{socket = Socket} = State, Err) when Socket /= undefined ->
     rtb_stats:decr('connections'),
     State1 = case Err of
                  {Tag, _} when Tag == socket; Tag == dns; Tag == tls ->
@@ -749,27 +744,10 @@ close_socket(#state{socket = {SockMod, Sock}} = State, Err) ->
                      Pkt = #disconnect{code = Code, properties = Props1},
                      send(State, Pkt)
              end,
-    SockMod:close(Sock),
+    mqtt_socket:close(Socket),
     State1#state{socket = undefined};
 close_socket(State, _) ->
     State.
-
--spec check_sock_result(socket(), ok | {error, inet:posix()}) -> ok.
-check_sock_result(_, ok) ->
-    ok;
-check_sock_result({_, Sock}, {error, Why}) ->
-    self() ! {tcp_closed, Sock},
-    lager:debug("MQTT socket error: ~p", [format_inet_error(Why)]).
-
--spec recv_data(socket(), binary()) -> {ok, binary()} | {error, error_reason()}.
-recv_data({fast_tls, Sock}, Data) when Data /= <<>> ->
-    case fast_tls:recv_data(Sock, Data) of
-	{ok, _} = OK -> OK;
-	{error, Reason} when is_atom(Reason) -> {error, {socket, Reason}};
-	{error, _} = Err -> Err
-    end;
-recv_data(_, Data) ->
-    {ok, Data}.
 
 -spec make_login(integer(), boolean()) -> {binary(), binary()} |
 					  {binary(), binary(), binary()}.
@@ -958,25 +936,6 @@ pp(state, N) ->
 pp(Rec, Size) ->
     mqtt_codec:pp(Rec, Size).
 
--spec format_inet_error(socket_error_reason()) -> string().
-format_inet_error(closed) ->
-    "connection closed";
-format_inet_error(timeout) ->
-    format_inet_error(etimedout);
-format_inet_error(Reason) ->
-    case inet:format_error(Reason) of
-	"unknown POSIX error" -> atom_to_list(Reason);
-	Txt -> Txt
-    end.
-
--spec format_tls_error(atom() | binary()) -> string() | binary().
-format_tls_error(no_cerfile) ->
-    "certificate not found";
-format_tls_error(Reason) when is_atom(Reason) ->
-    format_inet_error(Reason);
-format_tls_error(Reason) ->
-    Reason.
-
 -spec format(io:format(), list()) -> string().
 format(Fmt, Args) ->
     lists:flatten(io_lib:format(Fmt, Args)).
@@ -998,12 +957,8 @@ format_error(subscribe_failure) ->
     "SUBSCRIBE request has failed";
 format_error({unexpected_packet, Name}) ->
     format("Unexpected ~s packet", [string:to_upper(atom_to_list(Name))]);
-format_error({tls, Reason}) ->
-    format("TLS failed: ~s", [format_tls_error(Reason)]);
-format_error({dns, Reason}) ->
-    format("DNS lookup failed: ~s", [format_inet_error(Reason)]);
-format_error({socket, A}) ->
-    format("Connection failed: ~s", [format_inet_error(A)]);
+format_error({Tag, _} = Reason) when Tag == socket; Tag == dns; Tag == tls ->
+    mqtt_socket:format_error(Reason);
 format_error({auth, Code, <<>>}) ->
     format("Authentication failure: ~s",
            [mqtt_codec:format_reason_code(Code)]);
@@ -1038,91 +993,16 @@ disconnect_reason_code(_) -> 'unspecified-error'.
 connect(#state{conn_addrs = Addrs, conn_opts = Opts,
 	       timeout = Time} = State) ->
     StartTime = current_time(),
-    case lookup(Addrs, Time) of
+    case mqtt_socket:lookup(Addrs, Time) of
 	{ok, Addrs1} ->
-	    case connect(Addrs1, Opts, Time) of
+	    case mqtt_socket:connect(Addrs1, Opts, Time) of
 		{ok, Sock} ->
                     RTT = current_time() - StartTime,
                     rtb_stats:incr({'connect-rtt', RTT}),
 		    {ok, State#state{socket = Sock}};
-		Why ->
-		    {error, Why}
+		{error, _} = Err ->
+		    Err
 	    end;
-	Why ->
-	    {error, {dns, Why}}
+	{error, _} = Err ->
+	    Err
     end.
-
-lookup(Addrs, Time) ->
-    Addrs1 = lists:flatmap(
-	       fun({Addr, Port, TLS}) when is_tuple(Addr) ->
-		       [{Addr, Port, TLS, get_addr_type(Addr)}];
-		  ({Host, Port, TLS}) ->
-		       [{Host, Port, TLS, inet6},
-			{Host, Port, TLS, inet}]
-	       end, Addrs),
-    do_lookup(Addrs1, Time, [], nxdomain).
-
-do_lookup([{IP, _, _, _} = Addr|Addrs], Time, Res, Err) when is_tuple(IP) ->
-    do_lookup(Addrs, Time, [Addr|Res], Err);
-do_lookup([{Host, Port, TLS, Family}|Addrs], Time, Res, Err) ->
-    Timeout = min(?DNS_TIMEOUT, max(0, Time - current_time())),
-    case inet:gethostbyname(Host, Family, Timeout) of
-        {ok, HostEntry} ->
-            Addrs1 = host_entry_to_addrs(HostEntry),
-            Addrs2 = [{Addr, Port, TLS, Family} || Addr <- Addrs1],
-            do_lookup(Addrs, Time, Addrs2 ++ Res, Err);
-        {error, Why} ->
-            do_lookup(Addrs, Time, Res, Why)
-    end;
-do_lookup([], _Timeout, [], Err) ->
-    Err;
-do_lookup([], _Timeout, Res, _Err) ->
-    {ok, Res}.
-
-connect(Addrs, Opts, Time) ->
-    Timeout = max(0, Time - current_time()) div length(Addrs),
-    do_connect(Addrs, Opts, Timeout, {dns, nxdomain}).
-
-do_connect([{Addr, Port, TLS, Family}|Addrs], Opts, Timeout, _Err) ->
-    lager:debug("Connecting to ~s:~B (tls = ~p)",
-                [inet_parse:ntoa(Addr), Port, TLS]),
-    case gen_tcp:connect(Addr, Port, sockopts(Family, Opts), Timeout) of
-        {ok, Sock} ->
-	    case TLS of
-		true ->
-		    CertFile = {certfile, rtb_config:get_option(certfile)},
-		    case fast_tls:tcp_to_tls(Sock, [connect, CertFile]) of
-			{ok, Sock1} ->
-			    {ok, {fast_tls, Sock1}};
-			{error, Why} ->
-			    do_connect(Addrs, Opts, Timeout, {tls, Why})
-		    end;
-		false ->
-		    {ok, {gen_tcp, Sock}}
-	    end;
-        {error, Why} ->
-            do_connect(Addrs, Opts, Timeout, {socket, Why})
-    end;
-do_connect([], _, _, Err) ->
-    Err.
-
-host_entry_to_addrs(#hostent{h_addr_list = AddrList}) ->
-    lists:filter(
-      fun(Addr) ->
-              try get_addr_type(Addr) of
-                  _ -> true
-              catch _:badarg ->
-                      false
-              end
-      end, AddrList).
-
-get_addr_type({_, _, _, _}) -> inet;
-get_addr_type({_, _, _, _, _, _, _, _}) -> inet6;
-get_addr_type(_) -> erlang:error(badarg).
-
-sockopts(Family, Opts) ->
-    [{active, once},
-     {packet, raw},
-     {send_timeout, ?TCP_SEND_TIMEOUT},
-     {send_timeout_close, true},
-     binary, Family|Opts].

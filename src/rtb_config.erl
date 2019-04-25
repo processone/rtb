@@ -29,6 +29,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
+-include("rtb.hrl").
+
 -record(state, {}).
 
 %%%===================================================================
@@ -181,6 +183,8 @@ get_defined(Mod) ->
 		      {value, _, G1} -> {L -- [Opt], [Opt|G1]};
 		      false -> {L, G}
 		  end;
+	     ({Opt, _}, {L, G}) ->
+		  {L, lists:keydelete(Opt, 1, G)};
 	     (_, Acc) ->
 		  Acc
 	  end, {Locals, Globals}, Locals),
@@ -299,7 +303,7 @@ to_bool(S) when is_binary(S) ->
 format_val(I) when is_integer(I) ->
     integer_to_list(I);
 format_val(S) when is_binary(S) ->
-    S;	    
+    S;
 format_val(YAML) ->
     try [io_lib:nl(), fast_yaml:encode(YAML)]
     catch _:_ -> io_lib:format("~p", [YAML])
@@ -317,15 +321,13 @@ fail_unknown_opt(Opt) ->
 
 prep_servers([Server|Servers]) ->
     case http_uri:parse(binary_to_list(Server)) of
-	{ok, {Type, _, Host, Port, _, _}}
-	  when Port > 0 andalso Port < 65536
-	       andalso (Type == tls orelse Type == tcp) ->
+	{ok, {Type, _, Host, Port, Path, Query}}
+	  when Port > 0 andalso Port < 65536 ->
 	    Addr = case inet:parse_address(Host) of
 		       {ok, IP} -> IP;
 		       {error, _} -> Host
 		   end,
-	    case Type of
-		tls ->
+	    if Type == tls orelse Type == wss ->
 		    case get_option(certfile) of
 			undefined ->
 			    rtb:halt("Option 'certfile' is not set "
@@ -334,10 +336,17 @@ prep_servers([Server|Servers]) ->
 			_ ->
 			    ok
 		    end;
-		_ ->
-		    ok
+	       Type == tcp; Type == ws ->
+		    ok;
+	       true ->
+		    rtb:halt("Unsupported URI type: ~s", [Server])
 	    end,
-	    [{Addr, Port, Type == tls}|prep_servers(Servers)]
+	    [#endpoint{transport = Type,
+		       address = Addr,
+		       port = Port,
+		       host = Host,
+		       path = Path ++ Query}
+	     |prep_servers(Servers)]
     end;
 prep_servers([]) ->
     [].

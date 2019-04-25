@@ -38,8 +38,6 @@
 -callback prep_option(atom(), any()) -> {atom(), any()}.
 -callback metrics() -> [{atom(), metric()}].
 
--type server() :: inet:hostname() | inet:ip_address().
--type endpoint() :: {server(), inet:port_number(), boolean()}.
 -opaque pattern() :: [char() | current | {random, pool | sm} |
 		      {range, pos_integer(), pos_integer()}] |
 		     binary().
@@ -98,7 +96,7 @@ start_apps() ->
         lists:foreach(
           fun(App) ->
                   {ok, _} = application:ensure_all_started(App)
-          end, [crypto, inets, p1_utils, fast_yaml, oneup])
+          end, [crypto, inets, p1_utils, fast_yaml, oneup, gun])
     catch _:{badmatch, Reason} ->
             Reason
     end.

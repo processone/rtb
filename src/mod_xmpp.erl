@@ -102,6 +102,7 @@ options() ->
      {rosterver, true},
      {private, true},
      {muc_rooms, []},
+     {servers, []},
      %% Required options
      jid,
      password].
@@ -153,6 +154,16 @@ prep_option(jid, J) when is_binary(J) ->
     {jid, prep_jid(J)};
 prep_option(password, P) when is_binary(P) ->
     {password, rtb:make_pattern(P)};
+prep_option(servers, L) ->
+    {servers, EndPoints} = rtb_config:prep_option(servers, L),
+    lists:foreach(
+      fun(#endpoint{transport = T}) when T == ws; T == wss ->
+	      rtb:halt("WebSockets transport is not supported "
+		       "in XMPP scenario", []);
+	 (_) ->
+	      ok
+      end, EndPoints),
+    {servers, EndPoints};
 prep_option(sasl_mechanisms, Ms) when is_list(Ms) ->
     {sasl_mechanisms,
      [list_to_binary(string:to_upper(binary_to_list(M))) || M <- Ms]};
@@ -233,7 +244,8 @@ sasl_mechanisms(_) ->
     rtb_config:get_option(sasl_mechanisms).
 
 resolve(_, #{conn_addrs := Addrs}) ->
-    Addrs.
+    [{IP, Port, Transport == tls} ||
+	#endpoint{address = IP, port = Port, transport = Transport} <- Addrs].
 
 connect_options(_, Opts, #{conn_options := Opts1}) ->
     Opts1 ++ Opts.
@@ -911,7 +923,7 @@ format_stanza_error(#stanza_error{} = Err) ->
 
 format_me(#{conn_id := I, ip := {IP, _}}) ->
     [inet:ntoa(IP), $#, integer_to_list(I)];
-format_me(#{conn_id := I, conn_addrs := [{IP, _, _}|_]}) ->
+format_me(#{conn_id := I, conn_addrs := [#endpoint{address = IP}|_]}) ->
     [IP, $#, integer_to_list(I)];
 format_me(#{conn_id := I}) ->
     [$#, integer_to_list(I)].

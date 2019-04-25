@@ -22,3 +22,12 @@
 
 -type metric_type() :: gauge | counter | hist | bar.
 -type metric() :: #metric{}.
+
+-record(endpoint, {transport :: transport(),
+		   address :: inet:ip_address() | inet:hostname(),
+		   port :: inet:port_number(),
+		   host :: inet:hostname(),
+		   path :: string()}).
+
+-type transport() :: tcp | tls | ws | wss.
+-type endpoint() :: #endpoint{}.
