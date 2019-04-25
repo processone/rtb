@@ -195,16 +195,17 @@ This group of parameters are common for all scenarios.
 - **servers**: `[uri()]`
 
   The list of server URIs to connect. The format of the URI must be
-  `scheme://hostname:port/path` where `scheme` can be `tls`, `tcp`, `ws` or `wss`;
+  `scheme://hostname:port/path` where `scheme` can be `tcp`, `tls`, `ws` or `wss`;
   `hostname` can be any DNS name or IP address and `port` is a port number.
-  Note that all parts of the URI are mandatory. IPv6 addresses MUST be
-  enclosed in square brackets, e.g. `tcp://[1:2::3:4]:5222`.
-  This option is used to set a transport, address and port of the server(s)
-  being tested. It's highly recommended to use IP addresses in `hostname`
+  Note that `scheme`, `hostname` and `port` parts of the URI are mandatory, where
+  `path` part is optional and only meaningful when the scheme is `ws` or `wss`.
+  IPv6 addresses MUST be enclosed in square brackets.
+  It's highly recommended to use IP addresses in `hostname`
   part: excessive DNS lookups may create significant overhead for the
-  benchmarking tool itself. The `path` part of the URI is only meaningful
-  when the scheme is `ws` or `wss` (i.e. WebSocket). Note that WebSockets
-  connections are currently supported by MQTT scenario only.
+  benchmarking tool itself.
+
+  The option is used to set a transport, address and port of the server(s)
+  being tested.
 
   The option is only mandatory for MQTT scenario, because there are no well
   established mechanisms to locate MQTT servers.
@@ -216,6 +217,8 @@ This group of parameters are common for all scenarios.
 
   An URI from the `servers` list is picked in round-robin manner during
   initial connections setup, but it's picked randomly for reconnection attempts.
+
+  Note that WebSockets connections are currently supported by MQTT scenario only.
 
 Example:
 ```yaml
