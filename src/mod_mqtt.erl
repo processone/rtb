@@ -338,8 +338,18 @@ handle_info({tcp_closed, _Sock}, StateName, State) ->
     stop(StateName, State, {socket, closed});
 handle_info({tcp_error, _Sock, Reason}, StateName, State) ->
     stop(StateName, State, {socket, Reason});
-handle_info({gun_ws, ConnPid, _Ref, {binary, Data}}, StateName, State) ->
-    handle_info({tcp, ConnPid, Data}, StateName, State);
+handle_info({gun_ws, ConnPid, _Ref, Msg}, StateName, State) ->
+    case Msg of
+	{binary, Data} ->
+	    handle_info({tcp, ConnPid, Data}, StateName, State);
+	{text, Text} ->
+	    lager:warning(
+	      "Unexpected UTF-8 frame:~n~p~n** in state ~s:~n~s",
+	      [Text, StateName, pp(State)]),
+	    handle_info({tcp_closed, ConnPid}, StateName, State);
+	_ ->
+	    handle_info({tcp_closed, ConnPid}, StateName, State)
+    end;
 handle_info({gun_down, ConnPid, _, _, _, _}, StateName, State) ->
     handle_info({tcp_closed, ConnPid}, StateName, State);
 handle_info({gun_error, ConnPid, _Reason}, StateName, State) ->
