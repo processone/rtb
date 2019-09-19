@@ -58,7 +58,7 @@ To compile RTB you need:
 
 For Debian based distros to install all the dependencies run:
 ```
-# apt install gcc make libexpat1-dev libyaml-dev libssl1.0-dev \
+# apt install gcc make libexpat1-dev libyaml-dev libssl-dev \
               zlib1g-dev gnuplot-nox erlang-nox erlang-dev
 ```
 For Arch Linux:
