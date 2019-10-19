@@ -349,21 +349,20 @@ handle_packet(Pkt, State) when ?is_stanza(Pkt) ->
 handle_packet(#sm_r{}, #{mgmt_stanzas_in := H} = State) ->
     send_pkt(State, #sm_a{h = H, xmlns = ?NS_STREAM_MGMT_3});
 handle_packet(#sm_enabled{max = Max, id = ID}, #{action := connect} = State) ->
-    case {ID, Max} of
-	{undefined, _} ->
+    if ID == undefined ->
 	    Txt = io_lib:format(
 		    "~s doesn't support stream resumption",
 		    [maps:get(server, State)]),
 	    fail(State, Txt);
-	{_, undefined} ->
-	    Txt = io_lib:format(
-		    "~s doesn't report max resumption timeout",
-		    [maps:get(server, State)]),
-	    fail(State, Txt);
-	_ ->
-	    State1 = State#{mgmt_timeout => Max, mgmt_id => ID,
-			    mgmt_stanzas_in => 0},
-            send_iq_requests(State1)
+       true ->
+	    Timeout = min(Max, rtb_config:get_option(reconnect_interval)),
+	    State1 = State#{mgmt_id => ID, mgmt_stanzas_in => 0},
+	    State2 = if is_integer(Timeout) ->
+			     State1#{mgmt_timeout => Timeout};
+			true ->
+			     State1
+		     end,
+	    send_iq_requests(State2)
     end;
 handle_packet(#sm_resumed{}, State) ->
     State1 = maps:remove(stream_features, State),
