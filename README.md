@@ -48,7 +48,8 @@ To compile RTB you need:
 
  - Unix-like OS. Windows is not supported. Only Linux is tested.
  - GNU Make.
- - GCC.
+ - GCC
+ - G++
  - Libexpat ≥ 1.95
  - Libyaml ≥ 0.1.4
  - Erlang/OTP ≥ 19.0
@@ -58,7 +59,7 @@ To compile RTB you need:
 
 For Debian based distros to install all the dependencies run:
 ```
-# apt install gcc make libexpat1-dev libyaml-dev libssl-dev \
+# apt install gcc g++ make libexpat1-dev libyaml-dev libssl-dev \
               zlib1g-dev gnuplot-nox erlang-nox erlang-dev
 ```
 For Arch Linux:
